@@ -40,10 +40,10 @@ type EnvironmentSecret struct {
 func CreateConfig() *Config {
 	return &Config{
 		EnvironmentEndpoints: map[string]string{
-			".com":   "http://admin-service.admin/admin/api/system-config/?format=json",
-			".world": "http://admin-service.stage-admin/admin/api/system-config/?format=json",
-			".pro":   "http://admin-service.develop-admin/admin/api/system-config/?format=json",
-			"":       "http://admin-service.admin/admin/api/system-config/?format=json",
+			".com":   "http://maintenance-service.admin/v1/configurations/",
+			".world": "http://maintenance-service.stage-admin/v1/configurations/",
+			".pro":   "http://maintenance-service.develop-admin/v1/configurations/",
+			"":       "http://maintenance-service.admin/v1/configurations/",
 		},
 		EnvironmentSecrets: map[string]EnvironmentSecret{
 			".com":   {Header: "X-Plugin-Secret", Value: ""},
@@ -563,7 +563,7 @@ func getEndpointForDomain(domain string) string {
 		return defaultEndpoint
 	}
 
-	return "http://admin-service.admin/admin/api/system-config/?format=json"
+	return "http://maintenance-service.admin/v1/configurations/"
 }
 
 func New(ctx context.Context, next http.Handler, config *Config, name string) (http.Handler, error) {
@@ -587,10 +587,10 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 	environmentEndpoints := config.EnvironmentEndpoints
 	if len(environmentEndpoints) == 0 {
 		environmentEndpoints = map[string]string{
-			".com":   "http://admin-service.admin/admin/api/system-config/?format=json",
-			".world": "http://admin-service.stage-admin/admin/api/system-config/?format=json",
-			".pro":   "http://admin-service.develop-admin/admin/api/system-config/?format=json",
-			"":       "http://admin-service.admin/admin/api/system-config/?format=json",
+			".com":   "http://maintenance-service.admin/v1/configurations/",
+			".world": "http://maintenance-service.stage-admin/v1/configurations/",
+			".pro":   "http://maintenance-service.develop-admin/v1/configurations/",
+			"":       "http://maintenance-service.admin/v1/configurations/",
 		}
 	}
 
