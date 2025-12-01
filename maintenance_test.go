@@ -1710,6 +1710,284 @@ func TestProductionComDomainSupport(t *testing.T) {
 	}
 }
 
+func TestMultipleIPsInHeaders(t *testing.T) {
+	// Reset shared state between tests
+	plugin.ResetSharedCacheForTesting()
+	time.Sleep(100 * time.Millisecond)
+
+	// Create test server with specific IP whitelist
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		response := maintenanceResponse{}
+		response.SystemConfig.Maintenance.IsActive = true
+		// Only allow specific IPs
+		response.SystemConfig.Maintenance.Whitelist = []string{"192.168.1.100", "10.0.0.50", "203.0.113.0/24"}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
+	}))
+	defer ts.Close()
+
+	cfg := plugin.CreateConfig()
+	cfg.EnvironmentEndpoints = map[string]string{"": ts.URL}
+	cfg.CacheDurationInSeconds = 10
+	cfg.RequestTimeoutInSeconds = 5
+	cfg.MaintenanceStatusCode = 503
+	cfg.Debug = false
+
+	next := http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+		rw.WriteHeader(http.StatusOK)
+	})
+
+	handler, err := plugin.New(context.Background(), next, cfg, "multi-ip-test")
+	if err != nil {
+		t.Fatalf("Error creating plugin: %v", err)
+	}
+
+	// Allow time for initial fetch to complete
+	time.Sleep(200 * time.Millisecond)
+
+	tests := []struct {
+		name           string
+		headers        map[string]string
+		expectedStatus int
+		description    string
+	}{
+		{
+			name: "X-Forwarded-For with multiple IPs - first allowed",
+			headers: map[string]string{
+				"X-Forwarded-For": "192.168.1.100, 10.10.10.10, 172.16.0.1",
+			},
+			expectedStatus: http.StatusOK,
+			description:    "Should allow when first IP in X-Forwarded-For is whitelisted",
+		},
+		{
+			name: "X-Forwarded-For with multiple IPs - middle allowed",
+			headers: map[string]string{
+				"X-Forwarded-For": "8.8.8.8, 10.0.0.50, 172.16.0.1",
+			},
+			expectedStatus: http.StatusOK,
+			description:    "Should allow when any IP in X-Forwarded-For chain is whitelisted",
+		},
+		{
+			name: "X-Forwarded-For with multiple IPs - last allowed",
+			headers: map[string]string{
+				"X-Forwarded-For": "8.8.8.8, 1.1.1.1, 192.168.1.100",
+			},
+			expectedStatus: http.StatusOK,
+			description:    "Should allow when last IP in X-Forwarded-For is whitelisted",
+		},
+		{
+			name: "X-Forwarded-For with multiple IPs - none allowed",
+			headers: map[string]string{
+				"X-Forwarded-For": "8.8.8.8, 1.1.1.1, 172.16.0.1",
+			},
+			expectedStatus: 503,
+			description:    "Should block when no IP in X-Forwarded-For is whitelisted",
+		},
+		{
+			name: "Multiple headers with different IPs - one allowed",
+			headers: map[string]string{
+				"X-Forwarded-For": "8.8.8.8, 1.1.1.1",
+				"X-Real-Ip":       "192.168.1.100",
+			},
+			expectedStatus: http.StatusOK,
+			description:    "Should allow when any IP from any header is whitelisted",
+		},
+		{
+			name: "Multiple headers - CIDR match in chain",
+			headers: map[string]string{
+				"X-Forwarded-For": "8.8.8.8, 203.0.113.42, 1.1.1.1",
+			},
+			expectedStatus: http.StatusOK,
+			description:    "Should allow when any IP in chain matches CIDR whitelist",
+		},
+		{
+			name: "Complex proxy chain - allowed IP in middle",
+			headers: map[string]string{
+				"X-Forwarded-For":          "8.8.8.8, 10.0.0.50, 172.16.0.1",
+				"X-Real-Ip":                "172.16.0.1",
+				"X-Original-Forwarded-For": "9.9.9.9",
+			},
+			expectedStatus: http.StatusOK,
+			description:    "Should allow when whitelisted IP is found in complex proxy chain",
+		},
+		{
+			name: "Complex proxy chain - no allowed IPs",
+			headers: map[string]string{
+				"X-Forwarded-For":          "8.8.8.8, 9.9.9.9, 172.16.0.1",
+				"X-Real-Ip":                "172.16.0.1",
+				"X-Original-Forwarded-For": "7.7.7.7",
+			},
+			expectedStatus: 503,
+			description:    "Should block when no whitelisted IP is found in complex proxy chain",
+		},
+		{
+			name: "Cf-Connecting-Ip with chain in X-Forwarded-For",
+			headers: map[string]string{
+				"Cf-Connecting-Ip": "192.168.1.100",
+				"X-Forwarded-For":  "8.8.8.8, 1.1.1.1",
+			},
+			expectedStatus: http.StatusOK,
+			description:    "Should allow when Cf-Connecting-Ip is whitelisted even if XFF is not",
+		},
+		{
+			name: "All headers have blocked IPs except one",
+			headers: map[string]string{
+				"Cf-Connecting-Ip":         "8.8.8.8",
+				"True-Client-Ip":           "1.1.1.1",
+				"X-Forwarded-For":          "7.7.7.7, 6.6.6.6",
+				"X-Real-Ip":                "5.5.5.5",
+				"X-Client-Ip":              "4.4.4.4",
+				"X-Original-Forwarded-For": "10.0.0.50", // This one is allowed
+			},
+			expectedStatus: http.StatusOK,
+			description:    "Should allow when at least one IP from all headers is whitelisted",
+		},
+		{
+			name: "IPv4 with spaces in comma-separated list",
+			headers: map[string]string{
+				"X-Forwarded-For": "  8.8.8.8  ,  192.168.1.100  ,  1.1.1.1  ",
+			},
+			expectedStatus: http.StatusOK,
+			description:    "Should handle spaces around IPs in comma-separated list",
+		},
+		{
+			name: "Single IP with port in X-Forwarded-For",
+			headers: map[string]string{
+				"X-Forwarded-For": "192.168.1.100:8080",
+			},
+			expectedStatus: http.StatusOK,
+			description:    "Should strip port from IP and allow whitelisted IP",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "http://localhost/", nil)
+
+			// Set headers
+			for name, value := range tt.headers {
+				req.Header.Set(name, value)
+			}
+
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, req)
+
+			response := recorder.Result()
+			defer response.Body.Close()
+
+			if response.StatusCode != tt.expectedStatus {
+				t.Errorf("%s: Expected status code %d, got %d", tt.description, tt.expectedStatus, response.StatusCode)
+			}
+		})
+	}
+}
+
+func TestForwardedHeaderMultipleEntries(t *testing.T) {
+	// Reset shared state between tests
+	plugin.ResetSharedCacheForTesting()
+	time.Sleep(100 * time.Millisecond)
+
+	// Create test server with specific IP whitelist
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		response := maintenanceResponse{}
+		response.SystemConfig.Maintenance.IsActive = true
+		response.SystemConfig.Maintenance.Whitelist = []string{"192.168.1.100", "10.0.0.50"}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
+	}))
+	defer ts.Close()
+
+	cfg := plugin.CreateConfig()
+	cfg.EnvironmentEndpoints = map[string]string{"": ts.URL}
+	cfg.CacheDurationInSeconds = 10
+	cfg.RequestTimeoutInSeconds = 5
+	cfg.MaintenanceStatusCode = 503
+	cfg.Debug = false
+
+	next := http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+		rw.WriteHeader(http.StatusOK)
+	})
+
+	handler, err := plugin.New(context.Background(), next, cfg, "forwarded-test")
+	if err != nil {
+		t.Fatalf("Error creating plugin: %v", err)
+	}
+
+	// Allow time for initial fetch to complete
+	time.Sleep(200 * time.Millisecond)
+
+	tests := []struct {
+		name           string
+		headers        map[string]string
+		expectedStatus int
+		description    string
+	}{
+		{
+			name: "RFC 7239 Forwarded header - single entry allowed",
+			headers: map[string]string{
+				"Forwarded": "for=192.168.1.100;proto=https",
+			},
+			expectedStatus: http.StatusOK,
+			description:    "Should allow when Forwarded header contains whitelisted IP",
+		},
+		{
+			name: "RFC 7239 Forwarded header - multiple entries, one allowed",
+			headers: map[string]string{
+				"Forwarded": "for=8.8.8.8;proto=http, for=192.168.1.100;proto=https",
+			},
+			expectedStatus: http.StatusOK,
+			description:    "Should allow when any entry in Forwarded header is whitelisted",
+		},
+		{
+			name: "RFC 7239 Forwarded header - multiple entries, none allowed",
+			headers: map[string]string{
+				"Forwarded": "for=8.8.8.8;proto=http, for=1.1.1.1;proto=https",
+			},
+			expectedStatus: 503,
+			description:    "Should block when no entry in Forwarded header is whitelisted",
+		},
+		{
+			name: "RFC 7239 Forwarded header with by parameter - for is blocked",
+			headers: map[string]string{
+				"Forwarded": "for=8.8.8.8;by=10.0.0.50;proto=http",
+			},
+			expectedStatus: 503,
+			description:    "Should only check 'for' parameter (client IP), not 'by' parameter (proxy IP)",
+		},
+		{
+			name: "RFC 7239 Forwarded header with by parameter - for is allowed",
+			headers: map[string]string{
+				"Forwarded": "for=192.168.1.100;by=10.0.0.50;proto=http",
+			},
+			expectedStatus: http.StatusOK,
+			description:    "Should allow when 'for' parameter contains whitelisted IP",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "http://localhost/", nil)
+
+			// Set headers
+			for name, value := range tt.headers {
+				req.Header.Set(name, value)
+			}
+
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, req)
+
+			response := recorder.Result()
+			defer response.Body.Close()
+
+			if response.StatusCode != tt.expectedStatus {
+				t.Errorf("%s: Expected status code %d, got %d", tt.description, tt.expectedStatus, response.StatusCode)
+			}
+		})
+	}
+}
+
 func TestConfigurationOverridesBehavior(t *testing.T) {
 	plugin.ResetSharedCacheForTesting()
 	time.Sleep(100 * time.Millisecond)

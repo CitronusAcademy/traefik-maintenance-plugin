@@ -790,10 +790,12 @@ func (m *MaintenanceCheck) addCORSHeadersToMaintenanceResponse(rw http.ResponseW
 	}
 }
 
-func getClientIP(req *http.Request, debug bool) string {
+// getAllClientIPs extracts all IP addresses from all relevant headers
+// Returns a slice of unique IPs found in the request headers
+func getAllClientIPs(req *http.Request, debug bool) []string {
 	// Guard against nil request
 	if req == nil {
-		return ""
+		return []string{}
 	}
 
 	// Ordered list of headers to check, with Traefik-specific headers first
@@ -808,78 +810,141 @@ func getClientIP(req *http.Request, debug bool) string {
 		"X-Original-Forwarded-For", // Traefik specific
 	}
 
-	if debug {
-		fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Attempting to extract client IP from request headers\n")
-		fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Header priority order: %v\n", headers)
+	// Use a map to track unique IPs
+	uniqueIPs := make(map[string]struct{})
+	var allIPs []string
 
-		// Log all available header values for IP detection troubleshooting
-		for _, h := range headers {
-			val := req.Header.Get(h)
-			if val != "" {
-				fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Found header %s = %s\n", h, val)
-			}
-		}
+	if debug {
+		fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Extracting all client IPs from request headers\n")
+		fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Headers to check: %v\n", headers)
 	}
 
-	// First try all headers that might have the real client IP
+	// Process all headers and collect all IPs
 	for _, h := range headers {
 		addresses := req.Header.Get(h)
-		if addresses != "" {
-			if debug {
-				fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Processing header %s with value: %s\n", h, addresses)
-			}
+		if addresses == "" {
+			continue
+		}
 
-			// Special handling for Forwarded header (RFC 7239)
-			if h == "Forwarded" {
-				// Forwarded: for=192.0.2.60;proto=http;by=203.0.113.43
-				parts := strings.Split(addresses, ";")
+		if debug {
+			fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Processing header %s with value: %s\n", h, addresses)
+		}
+
+		// Special handling for Forwarded header (RFC 7239)
+		if h == "Forwarded" {
+			// Forwarded header can have multiple entries separated by comma
+			// Each entry: for=192.0.2.60;proto=http;by=203.0.113.43
+			forwardedEntries := strings.Split(addresses, ",")
+			for _, entry := range forwardedEntries {
+				entry = strings.TrimSpace(entry)
+				parts := strings.Split(entry, ";")
 				for _, part := range parts {
-					if strings.HasPrefix(part, "for=") {
+					part = strings.TrimSpace(part)
+					if strings.HasPrefix(strings.ToLower(part), "for=") {
 						ip := strings.TrimPrefix(part, "for=")
-						// Remove possible port and IPv6
-						ip = strings.TrimSuffix(strings.TrimPrefix(ip, "["), "]")
-						if idx := strings.LastIndex(ip, ":"); idx != -1 {
-							ip = ip[:idx]
+						ip = strings.TrimPrefix(ip, "FOR=")
+						ip = strings.TrimPrefix(ip, "For=")
+						// Remove quotes if present
+						ip = strings.Trim(ip, "\"")
+						// Handle IPv6 bracket notation [IPv6]:port
+						ip = cleanIPAddress(ip)
+						if ip != "" {
+							if _, exists := uniqueIPs[ip]; !exists {
+								uniqueIPs[ip] = struct{}{}
+								allIPs = append(allIPs, ip)
+								if debug {
+									fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Extracted IP from Forwarded header: %s\n", ip)
+								}
+							}
 						}
-						if debug {
-							fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Extracted IP from Forwarded header: %s\n", ip)
-						}
-						return strings.TrimSpace(ip)
 					}
 				}
-				if debug {
-					fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Could not extract IP from Forwarded header, no 'for=' parameter found\n")
-				}
-			} else {
-				// Normal comma-separated header value, take the leftmost (client) IP
-				parts := strings.Split(addresses, ",")
-				if len(parts) > 0 {
-					ip := strings.TrimSpace(parts[0])
-					// Check for IPv6 bracket notation [IPv6]:port
-					ip = strings.TrimSuffix(strings.TrimPrefix(ip, "["), "]")
-					if debug {
-						if len(parts) > 1 {
-							fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Multiple IPs found in %s, using leftmost: %s (full chain: %s)\n",
-								h, ip, addresses)
-						} else {
+			}
+		} else {
+			// Normal comma-separated header value, extract ALL IPs
+			parts := strings.Split(addresses, ",")
+			for _, part := range parts {
+				ip := strings.TrimSpace(part)
+				// Handle IPv6 bracket notation [IPv6]:port
+				ip = cleanIPAddress(ip)
+				if ip != "" {
+					if _, exists := uniqueIPs[ip]; !exists {
+						uniqueIPs[ip] = struct{}{}
+						allIPs = append(allIPs, ip)
+						if debug {
 							fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Extracted IP from %s header: %s\n", h, ip)
 						}
 					}
-					return ip
 				}
 			}
 		}
 	}
 
-	// Fallback to RemoteAddr if no headers found
-	ip := req.RemoteAddr
-	if idx := strings.LastIndex(ip, ":"); idx != -1 {
-		ip = ip[:idx]
+	// Add RemoteAddr as fallback
+	if req.RemoteAddr != "" {
+		ip := req.RemoteAddr
+		// Remove port from RemoteAddr
+		if idx := strings.LastIndex(ip, ":"); idx != -1 {
+			// Check if this is IPv6 with port [IPv6]:port
+			if strings.Contains(ip, "[") {
+				if bracketEnd := strings.Index(ip, "]"); bracketEnd != -1 {
+					ip = ip[1:bracketEnd] // Extract IPv6 without brackets
+				}
+			} else {
+				ip = ip[:idx]
+			}
+		}
+		if ip != "" {
+			if _, exists := uniqueIPs[ip]; !exists {
+				uniqueIPs[ip] = struct{}{}
+				allIPs = append(allIPs, ip)
+				if debug {
+					fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Added RemoteAddr IP: %s\n", ip)
+				}
+			}
+		}
 	}
+
 	if debug {
-		fmt.Fprintf(os.Stdout, "[MaintenanceCheck] No proxy headers found, using RemoteAddr IP: %s\n", ip)
+		fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Total unique IPs extracted: %d - %v\n", len(allIPs), allIPs)
 	}
+
+	return allIPs
+}
+
+// cleanIPAddress removes brackets, ports, and whitespace from an IP address
+func cleanIPAddress(ip string) string {
+	ip = strings.TrimSpace(ip)
+	if ip == "" {
+		return ""
+	}
+
+	// Handle IPv6 bracket notation [IPv6]:port or [IPv6]
+	if strings.HasPrefix(ip, "[") {
+		if bracketEnd := strings.Index(ip, "]"); bracketEnd != -1 {
+			ip = ip[1:bracketEnd]
+		}
+	} else if strings.Contains(ip, ".") {
+		// IPv4 with possible port
+		if colonIdx := strings.LastIndex(ip, ":"); colonIdx != -1 {
+			// Make sure this is not IPv6 (IPv6 has multiple colons)
+			if strings.Count(ip, ":") == 1 {
+				ip = ip[:colonIdx]
+			}
+		}
+	}
+
 	return ip
+}
+
+// getClientIP returns the first (highest priority) client IP from the request
+// This is kept for backward compatibility
+func getClientIP(req *http.Request, debug bool) string {
+	allIPs := getAllClientIPs(req, debug)
+	if len(allIPs) > 0 {
+		return allIPs[0]
+	}
+	return ""
 }
 
 func (m *MaintenanceCheck) isClientAllowed(req *http.Request, whitelist []string) bool {
@@ -903,6 +968,7 @@ func (m *MaintenanceCheck) isClientAllowed(req *http.Request, whitelist []string
 		}
 	}
 
+	// Check for wildcard first
 	for _, entry := range whitelist {
 		if entry == "*" {
 			if m.debug {
@@ -912,53 +978,63 @@ func (m *MaintenanceCheck) isClientAllowed(req *http.Request, whitelist []string
 		}
 	}
 
-	clientIP := getClientIP(req, m.debug)
+	// Get ALL client IPs from all headers
+	clientIPs := getAllClientIPs(req, m.debug)
 
-	// Invalid IP address
-	if clientIP == "" {
+	// No IPs found at all
+	if len(clientIPs) == 0 {
 		if m.debug {
-			fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Could not determine client IP, blocking request\n")
+			fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Could not determine any client IPs, blocking request\n")
 		}
 		return false
 	}
 
 	if m.debug {
-		fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Client IP for whitelist check: %s\n", clientIP)
-		fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Beginning whitelist evaluation for IP %s\n", clientIP)
+		fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Client IPs for whitelist check: %v\n", clientIPs)
+		fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Beginning whitelist evaluation for %d IPs\n", len(clientIPs))
 	}
 
-	for _, ip := range whitelist {
-		if ip == clientIP {
-			if m.debug {
-				fmt.Fprintf(os.Stdout, "[MaintenanceCheck] IP '%s' matches whitelist entry '%s', allowing request\n", clientIP, ip)
-			}
-			return true
+	// Check each client IP against the whitelist
+	// If ANY IP matches, allow the request
+	for _, clientIP := range clientIPs {
+		if clientIP == "" {
+			continue
 		}
 
-		// Add support for CIDR notation if the whitelist entry contains a slash
-		if strings.Contains(ip, "/") {
-			if m.debug {
-				fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Checking if IP '%s' is in CIDR range '%s'\n", clientIP, ip)
-			}
-
-			match, err := isCIDRMatch(clientIP, ip)
-			if err != nil {
+		for _, whitelistEntry := range whitelist {
+			// Exact match
+			if whitelistEntry == clientIP {
 				if m.debug {
-					fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Error checking CIDR match: %v\n", err)
-				}
-			} else if match {
-				if m.debug {
-					fmt.Fprintf(os.Stdout, "[MaintenanceCheck] IP '%s' is in CIDR range '%s', allowing request\n", clientIP, ip)
+					fmt.Fprintf(os.Stdout, "[MaintenanceCheck] IP '%s' matches whitelist entry '%s', allowing request\n", clientIP, whitelistEntry)
 				}
 				return true
-			} else if m.debug {
-				fmt.Fprintf(os.Stdout, "[MaintenanceCheck] IP '%s' is NOT in CIDR range '%s'\n", clientIP, ip)
+			}
+
+			// CIDR notation match
+			if strings.Contains(whitelistEntry, "/") {
+				if m.debug {
+					fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Checking if IP '%s' is in CIDR range '%s'\n", clientIP, whitelistEntry)
+				}
+
+				match, err := isCIDRMatch(clientIP, whitelistEntry)
+				if err != nil {
+					if m.debug {
+						fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Error checking CIDR match: %v\n", err)
+					}
+				} else if match {
+					if m.debug {
+						fmt.Fprintf(os.Stdout, "[MaintenanceCheck] IP '%s' is in CIDR range '%s', allowing request\n", clientIP, whitelistEntry)
+					}
+					return true
+				} else if m.debug {
+					fmt.Fprintf(os.Stdout, "[MaintenanceCheck] IP '%s' is NOT in CIDR range '%s'\n", clientIP, whitelistEntry)
+				}
 			}
 		}
 	}
 
 	if m.debug {
-		fmt.Fprintf(os.Stdout, "[MaintenanceCheck] IP '%s' not in whitelist, blocking request\n", clientIP)
+		fmt.Fprintf(os.Stdout, "[MaintenanceCheck] None of the client IPs %v matched whitelist, blocking request\n", clientIPs)
 	}
 	return false
 }
