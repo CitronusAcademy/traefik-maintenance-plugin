@@ -747,7 +747,7 @@ func (m *MaintenanceCheck) logRequestHeadersForDebugging(req *http.Request) {
 		fmt.Fprintf(os.Stdout, "[MaintenanceCheck]   %s: %s\n", headerName, strings.Join(headerValues, ", "))
 	}
 
-	fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Using header priority order: Cf-Connecting-Ip > True-Client-Ip > X-Forwarded-For > X-Real-Ip > X-Client-Ip > Forwarded > X-Original-Forwarded-For > RemoteAddr\n")
+	fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Using only Cf-Connecting-Ip header for IP detection (supports single value or CSV)\n")
 }
 
 func (m *MaintenanceCheck) extractHostWithoutPort(originalHost string) string {
@@ -790,119 +790,50 @@ func (m *MaintenanceCheck) addCORSHeadersToMaintenanceResponse(rw http.ResponseW
 	}
 }
 
-// getAllClientIPs extracts all IP addresses from all relevant headers
-// Returns a slice of unique IPs found in the request headers
+// getAllClientIPs extracts all IP addresses from Cf-Connecting-Ip header only
+// Returns a slice of unique IPs found in the header (supports single value or CSV)
 func getAllClientIPs(req *http.Request, debug bool) []string {
 	// Guard against nil request
 	if req == nil {
 		return []string{}
 	}
 
-	// Ordered list of headers to check, with Traefik-specific headers first
-	// Traefik sets Cf-Connecting-Ip, True-Client-Ip, and X-Real-Ip headers
-	headers := []string{
-		"Cf-Connecting-Ip",         // CloudFlare
-		"True-Client-Ip",           // Akamai/Cloudflare
-		"X-Forwarded-For",          // Standard
-		"X-Real-Ip",                // Nginx
-		"X-Client-Ip",              // Common
-		"Forwarded",                // RFC 7239
-		"X-Original-Forwarded-For", // Traefik specific
-	}
+	// Use only Cf-Connecting-Ip header (CloudFlare)
+	const cfHeader = "Cf-Connecting-Ip"
 
 	// Use a map to track unique IPs
 	uniqueIPs := make(map[string]struct{})
 	var allIPs []string
 
 	if debug {
-		fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Extracting all client IPs from request headers\n")
-		fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Headers to check: %v\n", headers)
+		fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Extracting client IPs from %s header only\n", cfHeader)
 	}
 
-	// Process all headers and collect all IPs
-	for _, h := range headers {
-		addresses := req.Header.Get(h)
-		if addresses == "" {
-			continue
-		}
-
+	// Get Cf-Connecting-Ip header value
+	addresses := req.Header.Get(cfHeader)
+	if addresses != "" {
 		if debug {
-			fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Processing header %s with value: %s\n", h, addresses)
+			fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Processing header %s with value: %s\n", cfHeader, addresses)
 		}
 
-		// Special handling for Forwarded header (RFC 7239)
-		if h == "Forwarded" {
-			// Forwarded header can have multiple entries separated by comma
-			// Each entry: for=192.0.2.60;proto=http;by=203.0.113.43
-			forwardedEntries := strings.Split(addresses, ",")
-			for _, entry := range forwardedEntries {
-				entry = strings.TrimSpace(entry)
-				parts := strings.Split(entry, ";")
-				for _, part := range parts {
-					part = strings.TrimSpace(part)
-					if strings.HasPrefix(strings.ToLower(part), "for=") {
-						ip := strings.TrimPrefix(part, "for=")
-						ip = strings.TrimPrefix(ip, "FOR=")
-						ip = strings.TrimPrefix(ip, "For=")
-						// Remove quotes if present
-						ip = strings.Trim(ip, "\"")
-						// Handle IPv6 bracket notation [IPv6]:port
-						ip = cleanIPAddress(ip)
-						if ip != "" {
-							if _, exists := uniqueIPs[ip]; !exists {
-								uniqueIPs[ip] = struct{}{}
-								allIPs = append(allIPs, ip)
-								if debug {
-									fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Extracted IP from Forwarded header: %s\n", ip)
-								}
-							}
-						}
-					}
-				}
-			}
-		} else {
-			// Normal comma-separated header value, extract ALL IPs
-			parts := strings.Split(addresses, ",")
-			for _, part := range parts {
-				ip := strings.TrimSpace(part)
-				// Handle IPv6 bracket notation [IPv6]:port
-				ip = cleanIPAddress(ip)
-				if ip != "" {
-					if _, exists := uniqueIPs[ip]; !exists {
-						uniqueIPs[ip] = struct{}{}
-						allIPs = append(allIPs, ip)
-						if debug {
-							fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Extracted IP from %s header: %s\n", h, ip)
-						}
+		// Handle comma-separated values (CSV) or single value
+		parts := strings.Split(addresses, ",")
+		for _, part := range parts {
+			ip := strings.TrimSpace(part)
+			// Handle IPv6 bracket notation [IPv6]:port
+			ip = cleanIPAddress(ip)
+			if ip != "" {
+				if _, exists := uniqueIPs[ip]; !exists {
+					uniqueIPs[ip] = struct{}{}
+					allIPs = append(allIPs, ip)
+					if debug {
+						fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Extracted IP from %s header: %s\n", cfHeader, ip)
 					}
 				}
 			}
 		}
-	}
-
-	// Add RemoteAddr as fallback
-	if req.RemoteAddr != "" {
-		ip := req.RemoteAddr
-		// Remove port from RemoteAddr
-		if idx := strings.LastIndex(ip, ":"); idx != -1 {
-			// Check if this is IPv6 with port [IPv6]:port
-			if strings.Contains(ip, "[") {
-				if bracketEnd := strings.Index(ip, "]"); bracketEnd != -1 {
-					ip = ip[1:bracketEnd] // Extract IPv6 without brackets
-				}
-			} else {
-				ip = ip[:idx]
-			}
-		}
-		if ip != "" {
-			if _, exists := uniqueIPs[ip]; !exists {
-				uniqueIPs[ip] = struct{}{}
-				allIPs = append(allIPs, ip)
-				if debug {
-					fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Added RemoteAddr IP: %s\n", ip)
-				}
-			}
-		}
+	} else if debug {
+		fmt.Fprintf(os.Stdout, "[MaintenanceCheck] %s header not found or empty\n", cfHeader)
 	}
 
 	if debug {
@@ -937,7 +868,7 @@ func cleanIPAddress(ip string) string {
 	return ip
 }
 
-// getClientIP returns the first (highest priority) client IP from the request
+// getClientIP returns the first client IP from Cf-Connecting-Ip header
 // This is kept for backward compatibility
 func getClientIP(req *http.Request, debug bool) string {
 	allIPs := getAllClientIPs(req, debug)
