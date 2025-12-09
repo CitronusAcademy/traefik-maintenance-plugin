@@ -78,6 +78,8 @@ func TestMaintenanceCheck(t *testing.T) {
 		skipPrefixes            []string
 		skipHosts               []string
 		host                    string
+		allowHTML               bool
+		acceptHeader            string
 		maintenanceStatusCode   int
 		expectedCode            int
 		description             string
@@ -107,6 +109,32 @@ func TestMaintenanceCheck(t *testing.T) {
 			maintenanceStatusCode:   512,
 			expectedCode:            512,
 			description:             "When maintenance is active with no whitelist, all requests should be blocked",
+		},
+		{
+			name:                    "Maintenance active - allow base HTML page",
+			endpoint:                activeEndpoint,
+			cacheDurationInSeconds:  10,
+			requestTimeoutInSeconds: 5,
+			clientIP:                "10.0.0.1",
+			urlPath:                 "/",
+			allowHTML:               true,
+			acceptHeader:            "text/html,application/xhtml+xml",
+			maintenanceStatusCode:   512,
+			expectedCode:            http.StatusOK,
+			description:             "When maintenance is active and HTML passthrough is enabled, base page should be allowed",
+		},
+		{
+			name:                    "Maintenance active - block API request when HTML passthrough on",
+			endpoint:                activeEndpoint,
+			cacheDurationInSeconds:  10,
+			requestTimeoutInSeconds: 5,
+			clientIP:                "10.0.0.1",
+			urlPath:                 "/api/v1/data",
+			allowHTML:               true,
+			acceptHeader:            "application/json",
+			maintenanceStatusCode:   512,
+			expectedCode:            512,
+			description:             "API requests must stay blocked even if HTML passthrough is enabled",
 		},
 		{
 			name:                    "Maintenance active - custom status code",
@@ -255,6 +283,7 @@ func TestMaintenanceCheck(t *testing.T) {
 			cfg.RequestTimeoutInSeconds = tt.requestTimeoutInSeconds
 			cfg.SkipPrefixes = tt.skipPrefixes
 			cfg.SkipHosts = tt.skipHosts
+			cfg.AllowHTMLWhenMaintenance = tt.allowHTML
 			cfg.MaintenanceStatusCode = tt.maintenanceStatusCode
 			cfg.Debug = false
 
@@ -274,6 +303,10 @@ func TestMaintenanceCheck(t *testing.T) {
 
 			if tt.clientIP != "" {
 				req.Header.Set("Cf-Connecting-Ip", tt.clientIP)
+			}
+
+			if tt.acceptHeader != "" {
+				req.Header.Set("Accept", tt.acceptHeader)
 			}
 
 			if tt.host != "" {
@@ -1766,8 +1799,8 @@ func TestCfConnectingIpHeader(t *testing.T) {
 			description:    "Should only use Cf-Connecting-Ip even if X-Forwarded-For has whitelisted IP",
 		},
 		{
-			name: "No IP headers present",
-			headers: map[string]string{},
+			name:           "No IP headers present",
+			headers:        map[string]string{},
 			expectedStatus: 503,
 			description:    "Should block when no Cf-Connecting-Ip header is present",
 		},

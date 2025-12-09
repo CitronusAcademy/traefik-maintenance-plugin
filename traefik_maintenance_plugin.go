@@ -20,16 +20,17 @@ var (
 )
 
 type Config struct {
-	EnvironmentEndpoints    map[string]string            `json:"environmentEndpoints,omitempty"`
-	EnvironmentSecrets      map[string]EnvironmentSecret `json:"environmentSecrets,omitempty"`
-	CacheDurationInSeconds  int                          `json:"cacheDurationInSeconds,omitempty"`
-	SkipPrefixes            []string                     `json:"skipPrefixes,omitempty"`
-	SkipHosts               []string                     `json:"skipHosts,omitempty"`
-	RequestTimeoutInSeconds int                          `json:"requestTimeoutInSeconds,omitempty"`
-	MaintenanceStatusCode   int                          `json:"maintenanceStatusCode,omitempty"`
-	Debug                   bool                         `json:"debug,omitempty"`
-	SecretHeader            string                       `json:"secretHeader,omitempty"`
-	SecretHeaderValue       string                       `json:"secretHeaderValue,omitempty"`
+	EnvironmentEndpoints     map[string]string            `json:"environmentEndpoints,omitempty"`
+	EnvironmentSecrets       map[string]EnvironmentSecret `json:"environmentSecrets,omitempty"`
+	CacheDurationInSeconds   int                          `json:"cacheDurationInSeconds,omitempty"`
+	SkipPrefixes             []string                     `json:"skipPrefixes,omitempty"`
+	SkipHosts                []string                     `json:"skipHosts,omitempty"`
+	AllowHTMLWhenMaintenance bool                         `json:"allowHTMLWhenMaintenance,omitempty"`
+	RequestTimeoutInSeconds  int                          `json:"requestTimeoutInSeconds,omitempty"`
+	MaintenanceStatusCode    int                          `json:"maintenanceStatusCode,omitempty"`
+	Debug                    bool                         `json:"debug,omitempty"`
+	SecretHeader             string                       `json:"secretHeader,omitempty"`
+	SecretHeaderValue        string                       `json:"secretHeaderValue,omitempty"`
 }
 
 type EnvironmentSecret struct {
@@ -51,12 +52,13 @@ func CreateConfig() *Config {
 			".pro":   {Header: "X-Plugin-Secret", Value: ""},
 			"":       {Header: "X-Plugin-Secret", Value: ""},
 		},
-		CacheDurationInSeconds:  10,
-		SkipPrefixes:            []string{},
-		SkipHosts:               []string{},
-		RequestTimeoutInSeconds: 5,
-		MaintenanceStatusCode:   512,
-		Debug:                   false,
+		CacheDurationInSeconds:   10,
+		SkipPrefixes:             []string{},
+		SkipHosts:                []string{},
+		AllowHTMLWhenMaintenance: true,
+		RequestTimeoutInSeconds:  5,
+		MaintenanceStatusCode:    512,
+		Debug:                    false,
 	}
 }
 
@@ -104,6 +106,7 @@ type MaintenanceCheck struct {
 	next                  http.Handler
 	skipPrefixes          []string
 	skipHosts             []string
+	allowHTML             bool
 	maintenanceStatusCode int
 	debug                 bool
 }
@@ -606,6 +609,7 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		next:                  next,
 		skipPrefixes:          skipPrefixesCopy,
 		skipHosts:             skipHostsCopy,
+		allowHTML:             config.AllowHTMLWhenMaintenance,
 		maintenanceStatusCode: config.MaintenanceStatusCode,
 		debug:                 config.Debug,
 	}
@@ -660,6 +664,14 @@ func (m *MaintenanceCheck) ServeHTTP(rw http.ResponseWriter, req *http.Request) 
 	}
 
 	if isActive {
+		if m.allowHTML && isHTMLRequest(req) {
+			if m.debug {
+				fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Maintenance active but request accepts HTML, bypassing maintenance check\n")
+			}
+			m.next.ServeHTTP(rw, req)
+			return
+		}
+
 		if m.isClientAllowed(req, whitelist) {
 			m.next.ServeHTTP(rw, req)
 			return
@@ -967,6 +979,33 @@ func (m *MaintenanceCheck) isClientAllowed(req *http.Request, whitelist []string
 	if m.debug {
 		fmt.Fprintf(os.Stdout, "[MaintenanceCheck] None of the client IPs %v matched whitelist, blocking request\n", clientIPs)
 	}
+	return false
+}
+
+// isHTMLRequest returns true when the request explicitly accepts HTML content.
+// This is used to optionally let base web pages through during maintenance,
+// while keeping API calls (typically JSON) blocked.
+func isHTMLRequest(req *http.Request) bool {
+	if req == nil {
+		return false
+	}
+
+	if req.Method != http.MethodGet && req.Method != http.MethodHead {
+		return false
+	}
+
+	acceptHeader := req.Header.Get("Accept")
+	if acceptHeader == "" {
+		return false
+	}
+
+	// Check if any Accept entry contains text/html
+	for _, part := range strings.Split(acceptHeader, ",") {
+		if strings.Contains(strings.ToLower(strings.TrimSpace(part)), "text/html") {
+			return true
+		}
+	}
+
 	return false
 }
 
