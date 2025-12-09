@@ -78,7 +78,9 @@ func TestMaintenanceCheck(t *testing.T) {
 		skipPrefixes            []string
 		skipHosts               []string
 		host                    string
+		method                  string
 		allowHTML               bool
+		allowStaticExts         []string
 		acceptHeader            string
 		maintenanceStatusCode   int
 		expectedCode            int
@@ -109,6 +111,32 @@ func TestMaintenanceCheck(t *testing.T) {
 			maintenanceStatusCode:   512,
 			expectedCode:            512,
 			description:             "When maintenance is active with no whitelist, all requests should be blocked",
+		},
+		{
+			name:                    "Maintenance active - allow static JS asset",
+			endpoint:                activeEndpoint,
+			cacheDurationInSeconds:  10,
+			requestTimeoutInSeconds: 5,
+			clientIP:                "10.0.0.1",
+			urlPath:                 "/assets/app-123.js",
+			method:                  http.MethodGet,
+			allowStaticExts:         []string{".js", ".css"},
+			maintenanceStatusCode:   512,
+			expectedCode:            http.StatusOK,
+			description:             "Static asset with allowed extension should bypass maintenance",
+		},
+		{
+			name:                    "Maintenance active - block static on POST",
+			endpoint:                activeEndpoint,
+			cacheDurationInSeconds:  10,
+			requestTimeoutInSeconds: 5,
+			clientIP:                "10.0.0.1",
+			urlPath:                 "/assets/app-123.js",
+			method:                  http.MethodPost,
+			allowStaticExts:         []string{".js", ".css"},
+			maintenanceStatusCode:   512,
+			expectedCode:            512,
+			description:             "Non-GET/HEAD should not bypass maintenance even if extension matches",
 		},
 		{
 			name:                    "Maintenance active - allow base HTML page",
@@ -284,6 +312,9 @@ func TestMaintenanceCheck(t *testing.T) {
 			cfg.SkipPrefixes = tt.skipPrefixes
 			cfg.SkipHosts = tt.skipHosts
 			cfg.AllowHTMLWhenMaintenance = tt.allowHTML
+			if tt.allowStaticExts != nil {
+				cfg.AllowStaticExtensions = tt.allowStaticExts
+			}
 			cfg.MaintenanceStatusCode = tt.maintenanceStatusCode
 			cfg.Debug = false
 
@@ -299,7 +330,11 @@ func TestMaintenanceCheck(t *testing.T) {
 			// Allow time for initial fetch to complete
 			time.Sleep(200 * time.Millisecond)
 
-			req := httptest.NewRequest(http.MethodGet, "http://localhost"+tt.urlPath, nil)
+			method := tt.method
+			if method == "" {
+				method = http.MethodGet
+			}
+			req := httptest.NewRequest(method, "http://localhost"+tt.urlPath, nil)
 
 			if tt.clientIP != "" {
 				req.Header.Set("Cf-Connecting-Ip", tt.clientIP)

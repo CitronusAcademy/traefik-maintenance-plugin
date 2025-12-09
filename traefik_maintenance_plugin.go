@@ -26,6 +26,7 @@ type Config struct {
 	SkipPrefixes             []string                     `json:"skipPrefixes,omitempty"`
 	SkipHosts                []string                     `json:"skipHosts,omitempty"`
 	AllowHTMLWhenMaintenance bool                         `json:"allowHTMLWhenMaintenance,omitempty"`
+	AllowStaticExtensions    []string                     `json:"allowStaticExtensions,omitempty"`
 	RequestTimeoutInSeconds  int                          `json:"requestTimeoutInSeconds,omitempty"`
 	MaintenanceStatusCode    int                          `json:"maintenanceStatusCode,omitempty"`
 	Debug                    bool                         `json:"debug,omitempty"`
@@ -56,9 +57,24 @@ func CreateConfig() *Config {
 		SkipPrefixes:             []string{},
 		SkipHosts:                []string{},
 		AllowHTMLWhenMaintenance: true,
-		RequestTimeoutInSeconds:  5,
-		MaintenanceStatusCode:    512,
-		Debug:                    false,
+		AllowStaticExtensions: []string{
+			".js",
+			".css",
+			".svg",
+			".ico",
+			".png",
+			".jpg",
+			".jpeg",
+			".gif",
+			".webp",
+			".woff",
+			".woff2",
+			".ttf",
+			".map",
+		},
+		RequestTimeoutInSeconds: 5,
+		MaintenanceStatusCode:   512,
+		Debug:                   false,
 	}
 }
 
@@ -107,6 +123,7 @@ type MaintenanceCheck struct {
 	skipPrefixes          []string
 	skipHosts             []string
 	allowHTML             bool
+	allowStaticExts       []string
 	maintenanceStatusCode int
 	debug                 bool
 }
@@ -605,11 +622,15 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 	skipHostsCopy := make([]string, len(config.SkipHosts))
 	copy(skipHostsCopy, config.SkipHosts)
 
+	staticExtsCopy := make([]string, len(config.AllowStaticExtensions))
+	copy(staticExtsCopy, config.AllowStaticExtensions)
+
 	m := &MaintenanceCheck{
 		next:                  next,
 		skipPrefixes:          skipPrefixesCopy,
 		skipHosts:             skipHostsCopy,
 		allowHTML:             config.AllowHTMLWhenMaintenance,
+		allowStaticExts:       staticExtsCopy,
 		maintenanceStatusCode: config.MaintenanceStatusCode,
 		debug:                 config.Debug,
 	}
@@ -667,6 +688,14 @@ func (m *MaintenanceCheck) ServeHTTP(rw http.ResponseWriter, req *http.Request) 
 		if m.allowHTML && isHTMLRequest(req) {
 			if m.debug {
 				fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Maintenance active but request accepts HTML, bypassing maintenance check\n")
+			}
+			m.next.ServeHTTP(rw, req)
+			return
+		}
+
+		if isStaticAssetRequest(req, m.allowStaticExts) {
+			if m.debug {
+				fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Maintenance active but path '%s' matches allowed static extensions, bypassing maintenance check\n", req.URL.Path)
 			}
 			m.next.ServeHTTP(rw, req)
 			return
@@ -1002,6 +1031,37 @@ func isHTMLRequest(req *http.Request) bool {
 	// Check if any Accept entry contains text/html
 	for _, part := range strings.Split(acceptHeader, ",") {
 		if strings.Contains(strings.ToLower(strings.TrimSpace(part)), "text/html") {
+			return true
+		}
+	}
+
+	return false
+}
+
+// isStaticAssetRequest returns true for GET/HEAD requests whose URL path ends
+// with one of the configured static extensions (case-insensitive). This is
+// used to optionally let static assets (JS/CSS/images/fonts, etc.) through
+// during maintenance without whitelisting.
+func isStaticAssetRequest(req *http.Request, extensions []string) bool {
+	if req == nil {
+		return false
+	}
+
+	if req.Method != http.MethodGet && req.Method != http.MethodHead {
+		return false
+	}
+
+	if len(extensions) == 0 {
+		return false
+	}
+
+	path := strings.ToLower(req.URL.Path)
+	for _, ext := range extensions {
+		trimmed := strings.TrimSpace(strings.ToLower(ext))
+		if trimmed == "" {
+			continue
+		}
+		if strings.HasSuffix(path, trimmed) {
 			return true
 		}
 	}

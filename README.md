@@ -11,6 +11,7 @@ A robust middleware plugin for Traefik that checks for maintenance status from a
 - Allows specific URL prefixes to bypass maintenance checks
 - Allows specific hosts to bypass maintenance checks (including wildcard domains)
 - Optional passthrough for base HTML pages during maintenance (keep APIs blocked)
+- Optional passthrough for static assets by extension (js/css/images/fonts)
 - **Full CORS support for preflight and actual requests during maintenance**
 - Configurable request timeout for maintenance status API 
 - Thread-safe implementation with zero impact on request performance
@@ -91,6 +92,11 @@ spec:
         - monitoring.example.com
         - *.internal.example.com
       allowHTMLWhenMaintenance: false # optional: allow HTML pages even in maintenance
+      allowStaticExtensions:    # optional: allow static assets even in maintenance (GET/HEAD only)
+        - ".js"
+        - ".css"
+        - ".svg"
+        - ".ico"
       maintenanceStatusCode: 512  # HTTP status code when in maintenance
       debug: false       # set to true to enable detailed logging
 ```
@@ -342,6 +348,7 @@ This extensive header checking ensures the plugin works correctly in complex pro
 - `maintenanceStatusCode` (optional): HTTP status code to return when in maintenance mode. Default is 512 (Service Unavailable).
 - `skipHosts` (optional): List of hostnames that should bypass maintenance checks, useful for admin interfaces, monitoring tools, etc. Supports wildcard patterns like "*.example.com". Default is empty list.
 - `allowHTMLWhenMaintenance` (optional): When true, GET/HEAD requests that explicitly accept `text/html` are allowed even during maintenance. API calls (typically `application/json`) remain blocked unless the IP is whitelisted.
+- `allowStaticExtensions` (optional): List of file extensions (case-insensitive) to allow during maintenance for GET/HEAD requests (e.g., `[".js", ".css", ".svg", ".ico", ".png", ".jpg", ".woff", ".woff2", ".ttf", ".map"]`). Useful for letting static FE assets load while blocking APIs.
 - `debug` (optional): Enable debug logging for troubleshooting. Default is false. When enabled, detailed information about decision making will be logged to stdout.
 - `secretHeader` (optional): Legacy fallback secret header name. Use `environmentSecrets` for per-environment configuration.
 - `secretHeaderValue` (optional): Legacy fallback secret header value. Use `environmentSecrets` for per-environment configuration.
