@@ -92,7 +92,7 @@ func refreshMaintenanceStatusForEnvironment(envSuffix string) bool {
 	currentFailedAttempts := envCache.failedAttempts
 
 	var secretHeader, secretHeaderValue string
-	if envSecret, exists := sharedCache.environmentSecrets[envSuffix]; exists {
+	if envSecret, exists := sharedCache.environmentSecrets[envSuffix]; exists && envSecret.Value != "" {
 		secretHeader = envSecret.Header
 		secretHeaderValue = envSecret.Value
 	} else if sharedCache.secretHeader != "" && sharedCache.secretHeaderValue != "" {

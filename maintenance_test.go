@@ -2134,3 +2134,45 @@ func TestCORSPreflightStripsHostPort(t *testing.T) {
 		t.Fatalf("expected preflight CORS headers for ported host; got headers %v, code %d", rec.Header(), rec.Code)
 	}
 }
+
+func TestTopLevelSecretUsedWhenPerSuffixValueEmpty(t *testing.T) {
+	plugin.ResetSharedCacheForTesting()
+	defer plugin.ResetSharedCacheForTesting()
+
+	gotSecret := make(chan string, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case gotSecret <- r.Header.Get("X-Plugin-Secret"):
+		default:
+		}
+		_, _ = w.Write([]byte(`{"system_config":{"maintenance":{"is_active":true,"whitelist":[]}}}`))
+	}))
+	defer srv.Close()
+
+	cfg := plugin.CreateConfig()
+	cfg.MaintenanceStatusCode = 512
+	cfg.CacheDurationInSeconds = 30
+	cfg.RequestTimeoutInSeconds = 5
+	cfg.EnvironmentEndpoints = map[string]string{".world": srv.URL}
+	// Per-suffix entry exists but carries no value (the CreateConfig default shape).
+	cfg.EnvironmentSecrets = map[string]plugin.EnvironmentSecret{
+		".world": {Header: "X-Plugin-Secret", Value: ""},
+	}
+	// The real secret is wired at top level.
+	cfg.SecretHeader = "X-Plugin-Secret"
+	cfg.SecretHeaderValue = "real-secret-token"
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	if _, err := plugin.New(context.Background(), next, cfg, "test"); err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	select {
+	case s := <-gotSecret:
+		if s != "real-secret-token" {
+			t.Fatalf("maintenance API received secret %q, want %q", s, "real-secret-token")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("maintenance API was never called")
+	}
+}
