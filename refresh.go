@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math/rand"
 	"net/http"
 	"os"
@@ -159,24 +160,14 @@ func refreshMaintenanceStatusForEnvironment(envSuffix string) bool {
 		return false
 	}
 
-	if resp != nil && resp.Body != nil {
-		defer func() {
-			err := resp.Body.Close()
-			if err != nil && debug {
-				fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Error closing response body: %v\n", err)
-			}
-		}()
-	}
-
-	if resp == nil {
-		if debug {
-			fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Nil response received\n")
+	// client.Do guarantees resp != nil and resp.Body != nil when err == nil.
+	// Drain before Close so the keep-alive connection is returned to the pool.
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		if cerr := resp.Body.Close(); cerr != nil && debug {
+			fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Error closing response body: %v\n", cerr)
 		}
-
-		backoffTime := calculateBackoff(currentFailedAttempts)
-		updateEnvironmentCache(envSuffix, nil, backoffTime, currentFailedAttempts+1, false)
-		return false
-	}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		if debug {
