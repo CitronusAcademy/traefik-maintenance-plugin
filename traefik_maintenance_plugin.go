@@ -20,7 +20,7 @@ type MaintenanceCheck struct {
 	allowedOrigins        []string
 }
 
-func New(ctx context.Context, next http.Handler, config *Config, name string) (http.Handler, error) {
+func New(_ context.Context, next http.Handler, config *Config, name string) (http.Handler, error) {
 	if config.MaintenanceStatusCode < 100 || config.MaintenanceStatusCode > 599 {
 		return nil, fmt.Errorf("invalid maintenance status code: %d (must be between 100-599)",
 			config.MaintenanceStatusCode)
@@ -75,16 +75,6 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		debug:                 config.Debug,
 		allowedOrigins:        allowedOriginsCopy,
 	}
-
-	// Capture only the bool so the goroutine does not pin the whole *Config
-	// (and its slices/strings) alive for the middleware's lifetime.
-	debug := config.Debug
-	go func() {
-		<-ctx.Done()
-		if debug {
-			fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Context cancelled for middleware instance\n")
-		}
-	}()
 
 	return m, nil
 }
