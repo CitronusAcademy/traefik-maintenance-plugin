@@ -20,6 +20,7 @@ type Config struct {
 	SecretHeader             string                       `json:"secretHeader,omitempty"`
 	SecretHeaderValue        string                       `json:"secretHeaderValue,omitempty"`
 	AllowedOrigins           []string                     `json:"allowedOrigins,omitempty"`
+	CorsAllowAnyOrigin       bool                         `json:"corsAllowAnyOrigin,omitempty"`
 }
 
 type EnvironmentSecret struct {
@@ -57,6 +58,7 @@ func CreateConfig() *Config {
 		RequestTimeoutInSeconds: 5,
 		MaintenanceStatusCode:   512,
 		Debug:                   false,
+		CorsAllowAnyOrigin:      true,
 	}
 }
 

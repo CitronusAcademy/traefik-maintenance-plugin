@@ -18,6 +18,7 @@ type MaintenanceCheck struct {
 	maintenanceStatusCode int
 	debug                 bool
 	allowedOrigins        []string
+	corsAllowAnyOrigin    bool
 }
 
 func New(_ context.Context, next http.Handler, config *Config, name string) (http.Handler, error) {
@@ -74,6 +75,7 @@ func New(_ context.Context, next http.Handler, config *Config, name string) (htt
 		maintenanceStatusCode: config.MaintenanceStatusCode,
 		debug:                 config.Debug,
 		allowedOrigins:        allowedOriginsCopy,
+		corsAllowAnyOrigin:    config.CorsAllowAnyOrigin,
 	}
 
 	return m, nil

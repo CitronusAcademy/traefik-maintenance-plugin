@@ -30,7 +30,7 @@ func (m *MaintenanceCheck) handleCORSPreflightRequest(rw http.ResponseWriter, re
 
 func (m *MaintenanceCheck) originAllowed(origin string) bool {
 	if len(m.allowedOrigins) == 0 {
-		return true // back-compat: no allow-list configured → reflect any origin
+		return m.corsAllowAnyOrigin // empty list: reflect any (default) or none (opt-in lock-down)
 	}
 	for _, o := range m.allowedOrigins {
 		if o == origin {
