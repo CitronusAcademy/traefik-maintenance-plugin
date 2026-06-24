@@ -28,9 +28,26 @@ var (
 		secretHeaderValue    string
 	}
 	initLock     sync.Mutex
-	refreshLock  sync.Mutex
+	envLocksMu   sync.Mutex
+	envLocks     = make(map[string]*sync.Mutex)
 	shutdownOnce sync.Once // Ensure clean shutdown happens only once
 )
+
+// envLock returns the per-environment refresh lock for the given suffix,
+// creating it on first use. A per-environment lock lets different
+// environments refresh concurrently while serializing refreshes of the same
+// environment — and, unlike the old global TryLock, a contended refresh never
+// reports false success without actually fetching.
+func envLock(suffix string) *sync.Mutex {
+	envLocksMu.Lock()
+	defer envLocksMu.Unlock()
+	l, ok := envLocks[suffix]
+	if !ok {
+		l = &sync.Mutex{}
+		envLocks[suffix] = l
+	}
+	return l
+}
 
 func ensureSharedCacheInitialized(environmentEndpoints map[string]string, environmentSecrets map[string]EnvironmentSecret, cacheDuration, requestTimeout time.Duration, debug bool, userAgent string, secretHeader, secretHeaderValue string) {
 	if sharedCache.initialized {
@@ -284,6 +301,10 @@ func CloseSharedCache() {
 func ResetSharedCacheForTesting() {
 	initLock.Lock()
 	defer initLock.Unlock()
+
+	envLocksMu.Lock()
+	envLocks = make(map[string]*sync.Mutex)
+	envLocksMu.Unlock()
 
 	if sharedCache.initialized && sharedCache.stopCh != nil {
 		close(sharedCache.stopCh)

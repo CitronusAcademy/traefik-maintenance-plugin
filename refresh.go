@@ -71,13 +71,9 @@ func refreshAllEnvironments() {
 }
 
 func refreshMaintenanceStatusForEnvironment(envSuffix string) bool {
-	if !refreshLock.TryLock() {
-		return true
-	}
-
-	defer func() {
-		refreshLock.Unlock()
-	}()
+	lock := envLock(envSuffix)
+	lock.Lock()
+	defer lock.Unlock()
 
 	sharedCache.RLock()
 	client := sharedCache.client
@@ -206,9 +202,6 @@ func refreshMaintenanceStatusForEnvironment(envSuffix string) bool {
 
 	isActive := result.SystemConfig.Maintenance.IsActive
 	whitelist := result.SystemConfig.Maintenance.Whitelist
-
-	whitelistCopy := make([]string, len(whitelist))
-	copy(whitelistCopy, whitelist)
 
 	updateEnvironmentCache(envSuffix, &MaintenanceResponse{result.SystemConfig}, cacheDuration, 0, true)
 
