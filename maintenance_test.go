@@ -1498,10 +1498,10 @@ func TestCORSFunctionalityDuringMaintenance(t *testing.T) {
 			name:                "CORS preflight - maintenance active, blocked IP",
 			endpoint:            ts.URL + "/maintenance-active-no-whitelist",
 			method:              http.MethodOptions,
-			origin:              "https://citronus.pro",
+			origin:              "https://example.pro",
 			clientIP:            "10.0.0.1",
 			expectedStatusCode:  http.StatusOK, // Preflight should return 200 even when blocked
-			expectedCORSOrigin:  "https://citronus.pro",
+			expectedCORSOrigin:  "https://example.pro",
 			expectedCORSMethods: "GET, POST, PUT, DELETE, OPTIONS",
 			expectedCORSHeaders: "Accept, Authorization, Content-Type, X-CSRF-Token",
 			expectedCORSMaxAge:  "86400",
@@ -1511,10 +1511,10 @@ func TestCORSFunctionalityDuringMaintenance(t *testing.T) {
 			name:                "CORS preflight - maintenance active, allowed IP",
 			endpoint:            ts.URL + "/maintenance-active-with-whitelist",
 			method:              http.MethodOptions,
-			origin:              "https://citronus.pro",
+			origin:              "https://example.pro",
 			clientIP:            "192.168.1.1",
 			expectedStatusCode:  http.StatusNoContent, // Successful preflight
-			expectedCORSOrigin:  "https://citronus.pro",
+			expectedCORSOrigin:  "https://example.pro",
 			expectedCORSMethods: "GET, POST, PUT, DELETE, OPTIONS",
 			expectedCORSHeaders: "Accept, Authorization, Content-Type, X-CSRF-Token",
 			expectedCORSMaxAge:  "86400",
@@ -1524,7 +1524,7 @@ func TestCORSFunctionalityDuringMaintenance(t *testing.T) {
 			name:                "CORS preflight - maintenance inactive",
 			endpoint:            ts.URL, // Default inactive maintenance
 			method:              http.MethodOptions,
-			origin:              "https://citronus.pro",
+			origin:              "https://example.pro",
 			clientIP:            "10.0.0.1",
 			expectedStatusCode:  http.StatusOK, // Backend handles OPTIONS and returns 200 (from our test server)
 			expectedCORSOrigin:  "",            // No CORS headers from plugin when maintenance is off
@@ -1537,10 +1537,10 @@ func TestCORSFunctionalityDuringMaintenance(t *testing.T) {
 			name:                "Regular request - maintenance active, blocked IP with CORS",
 			endpoint:            ts.URL + "/maintenance-active-no-whitelist",
 			method:              http.MethodGet,
-			origin:              "https://citronus.pro",
+			origin:              "https://example.pro",
 			clientIP:            "10.0.0.1",
 			expectedStatusCode:  512, // Maintenance status code
-			expectedCORSOrigin:  "https://citronus.pro",
+			expectedCORSOrigin:  "https://example.pro",
 			expectedCORSMethods: "GET, POST, PUT, DELETE, OPTIONS",
 			expectedCORSHeaders: "Accept, Authorization, Content-Type, X-CSRF-Token",
 			expectedCORSMaxAge:  "86400",
@@ -1550,7 +1550,7 @@ func TestCORSFunctionalityDuringMaintenance(t *testing.T) {
 			name:               "Regular request - maintenance active, allowed IP",
 			endpoint:           ts.URL + "/maintenance-active-with-whitelist",
 			method:             http.MethodGet,
-			origin:             "https://citronus.pro",
+			origin:             "https://example.pro",
 			clientIP:           "192.168.1.1",
 			expectedStatusCode: http.StatusOK, // Pass through to backend
 			description:        "Should pass through to backend for whitelisted IP",
@@ -1707,7 +1707,7 @@ func TestProductionComDomainSupport(t *testing.T) {
 				".com": ts.URL + "/prod-maintenance-active",
 				"":     ts.URL + "/prod-maintenance-inactive", // default fallback
 			},
-			testDomain:     "api.citronus.com",
+			testDomain:     "api.example.com",
 			clientIP:       "203.0.113.100", // In whitelist range
 			expectedStatus: http.StatusOK,
 			description:    "Should route .com domain to custom production endpoint and allow whitelisted IP",
@@ -1718,7 +1718,7 @@ func TestProductionComDomainSupport(t *testing.T) {
 				".com": ts.URL + "/prod-maintenance-active",
 				"":     ts.URL + "/prod-maintenance-inactive",
 			},
-			testDomain:     "portal.citronus.com",
+			testDomain:     "portal.example.com",
 			clientIP:       "10.0.0.1", // Not in whitelist
 			expectedStatus: 512,
 			description:    "Should route .com domain to custom production endpoint and block non-whitelisted IP",
@@ -1742,7 +1742,7 @@ func TestProductionComDomainSupport(t *testing.T) {
 				".dev":   ts.URL + "/prod-maintenance-inactive",
 				"":       ts.URL + "/prod-maintenance-inactive",
 			},
-			testDomain:     "staging.citronus.local",
+			testDomain:     "staging.example.local",
 			clientIP:       "192.168.1.1",
 			expectedStatus: http.StatusOK,
 			description:    "Should support multiple custom domain endpoints",
@@ -1989,22 +1989,22 @@ func TestConfigurationOverridesBehavior(t *testing.T) {
 		description    string
 	}{
 		{
-			domain:         "app.citronus.production",
+			domain:         "app.example.production",
 			expectedStatus: http.StatusOK,
 			description:    "Custom .production domain should work",
 		},
 		{
-			domain:         "test.citronus.staging",
+			domain:         "test.example.staging",
 			expectedStatus: http.StatusOK,
 			description:    "Custom .staging domain should work",
 		},
 		{
-			domain:         "legacy.citronus.com",
+			domain:         "legacy.example.com",
 			expectedStatus: http.StatusOK,
 			description:    "Non-matching domain should use default endpoint",
 		},
 		{
-			domain:         "dev.citronus.world",
+			domain:         "dev.example.world",
 			expectedStatus: http.StatusOK,
 			description:    "Previously hardcoded .world should now use default endpoint",
 		},
