@@ -26,3 +26,19 @@ func TestResolveEnvSuffixLongestMatchDeterministic(t *testing.T) {
 		}
 	}
 }
+
+func TestResolveEnvSuffixLabelBoundary(t *testing.T) {
+	endpoints := map[string]string{"pro": "P", ".world": "W", "": "D"}
+	cases := map[string]string{
+		"mypro":    "",       // mid-label, must NOT match "pro"
+		"app.pro":  "pro",    // label boundary before "pro"
+		"x.world":  ".world", // leading-dot key
+		"notworld": "",       // mid-label, must NOT match ".world"
+		"pro":      "pro",    // whole-host equality
+	}
+	for host, want := range cases {
+		if got := resolveEnvSuffix(host, endpoints); got != want {
+			t.Errorf("resolveEnvSuffix(%q) = %q, want %q", host, got, want)
+		}
+	}
+}

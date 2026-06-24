@@ -209,11 +209,25 @@ func resolveEnvSuffix(domain string, endpoints map[string]string) string {
 		if suffix == "" {
 			continue
 		}
-		if strings.HasSuffix(domain, suffix) && len(suffix) > len(best) {
+		if suffixMatchesDomain(domain, suffix) && len(suffix) > len(best) {
 			best = suffix
 		}
 	}
 	return best
+}
+
+// suffixMatchesDomain reports whether suffix matches domain on a label boundary:
+// the whole host equals the suffix, the suffix itself starts with '.', or the
+// character just before the matched suffix is '.'. This stops a dotless suffix
+// key (e.g. "pro") from over-matching mid-label (e.g. "mypro").
+func suffixMatchesDomain(domain, suffix string) bool {
+	if !strings.HasSuffix(domain, suffix) {
+		return false
+	}
+	if domain == suffix || strings.HasPrefix(suffix, ".") {
+		return true
+	}
+	return domain[len(domain)-len(suffix)-1] == '.'
 }
 
 func getMaintenanceStatusForDomain(domain string) (bool, []string) {
