@@ -64,6 +64,27 @@ func TestRefresherReusesConnectionAcrossPolls(t *testing.T) {
 	}
 }
 
+func TestCloseSharedCacheIsIdempotent(t *testing.T) {
+	plugin.ResetSharedCacheForTesting()
+	defer plugin.ResetSharedCacheForTesting()
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"system_config":{"maintenance":{"is_active":false,"whitelist":[]}}}`)
+	}))
+	defer ts.Close()
+
+	cfg := plugin.CreateConfig()
+	cfg.EnvironmentEndpoints = map[string]string{"": ts.URL + "/"}
+	if _, err := plugin.New(context.Background(), nextNoop(), cfg, "test"); err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	// Must not panic and must be safe to call more than once.
+	plugin.CloseSharedCache()
+	plugin.CloseSharedCache()
+}
+
 func setupTestServer() (*httptest.Server, string, string, string, string) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		response := maintenanceResponse{}
