@@ -8,14 +8,7 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
-	"sync"
 	"time"
-)
-
-// Initialize random source for jitter calculations
-var (
-	randSource = rand.New(rand.NewSource(time.Now().UnixNano()))
-	randMutex  sync.Mutex // Mutex to protect randSource as it's not concurrent-safe
 )
 
 func startBackgroundRefresher() {
@@ -194,14 +187,11 @@ func refreshMaintenanceStatusForEnvironment(envSuffix string) bool {
 		return false
 	}
 
-	isActive := result.SystemConfig.Maintenance.IsActive
-	whitelist := result.SystemConfig.Maintenance.Whitelist
-
 	updateEnvironmentCache(envSuffix, &result, cacheDuration, 0, true)
 
 	if debug {
 		fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Successfully updated maintenance status for environment '%s': active=%v, whitelist count=%d\n",
-			envSuffix, isActive, len(whitelist))
+			envSuffix, result.SystemConfig.Maintenance.IsActive, len(result.SystemConfig.Maintenance.Whitelist))
 	}
 
 	return true
@@ -221,10 +211,9 @@ func calculateBackoff(attempts int) time.Duration {
 	// Base exponential backoff: 5s, 10s, 20s, 40s, etc. up to ~1h
 	backoff := 5 * time.Second * time.Duration(1<<uint(attempts))
 
-	// Add jitter of +/- 20% to avoid thundering herd problem
-	randMutex.Lock()
-	jitterFactor := 0.8 + 0.4*randSource.Float64()
-	randMutex.Unlock()
+	// Add jitter of +/- 20% to avoid thundering herd problem.
+	// math/rand's top-level funcs are auto-seeded and goroutine-safe (Go 1.20+).
+	jitterFactor := 0.8 + 0.4*rand.Float64()
 
 	jitter := time.Duration(float64(backoff) * jitterFactor)
 

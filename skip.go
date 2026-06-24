@@ -76,7 +76,8 @@ func isHTMLRequest(req *http.Request) bool {
 // isStaticAssetRequest returns true for GET/HEAD requests whose URL path ends
 // with one of the configured static extensions (case-insensitive). This is
 // used to optionally let static assets (JS/CSS/images/fonts, etc.) through
-// during maintenance without whitelisting.
+// during maintenance without whitelisting. The extensions are already
+// normalized (lowercased, trimmed, no empties) at construction time.
 func isStaticAssetRequest(req *http.Request, extensions []string) bool {
 	if req == nil {
 		return false
@@ -92,11 +93,7 @@ func isStaticAssetRequest(req *http.Request, extensions []string) bool {
 
 	path := strings.ToLower(req.URL.Path)
 	for _, ext := range extensions {
-		trimmed := strings.TrimSpace(strings.ToLower(ext))
-		if trimmed == "" {
-			continue
-		}
-		if strings.HasSuffix(path, trimmed) {
+		if strings.HasSuffix(path, ext) {
 			return true
 		}
 	}

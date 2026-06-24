@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -52,8 +53,14 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 	skipHostsCopy := make([]string, len(config.SkipHosts))
 	copy(skipHostsCopy, config.SkipHosts)
 
-	staticExtsCopy := make([]string, len(config.AllowStaticExtensions))
-	copy(staticExtsCopy, config.AllowStaticExtensions)
+	// Normalize static extensions once here (lowercase, trimmed, no empties) so
+	// the per-request suffix check stays allocation-free on the hot path.
+	staticExtsCopy := make([]string, 0, len(config.AllowStaticExtensions))
+	for _, ext := range config.AllowStaticExtensions {
+		if trimmed := strings.TrimSpace(strings.ToLower(ext)); trimmed != "" {
+			staticExtsCopy = append(staticExtsCopy, trimmed)
+		}
+	}
 
 	allowedOriginsCopy := make([]string, len(config.AllowedOrigins))
 	copy(allowedOriginsCopy, config.AllowedOrigins)
@@ -69,9 +76,12 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		allowedOrigins:        allowedOriginsCopy,
 	}
 
+	// Capture only the bool so the goroutine does not pin the whole *Config
+	// (and its slices/strings) alive for the middleware's lifetime.
+	debug := config.Debug
 	go func() {
 		<-ctx.Done()
-		if config.Debug {
+		if debug {
 			fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Context cancelled for middleware instance\n")
 		}
 	}()

@@ -219,10 +219,16 @@ func getMaintenanceStatusForDomain(domain string) (bool, []string) {
 			envSuffix, domain, envCache.isActive, len(envCache.whitelist))
 	}
 
+	// The whitelist is only consulted while maintenance is active, so avoid the
+	// per-request allocation+copy in the common (inactive) case.
+	if !envCache.isActive {
+		return false, nil
+	}
+
 	whitelistCopy := make([]string, len(envCache.whitelist))
 	copy(whitelistCopy, envCache.whitelist)
 
-	return envCache.isActive, whitelistCopy
+	return true, whitelistCopy
 }
 
 func getEndpointForDomain(domain string) string {
