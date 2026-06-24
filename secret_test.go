@@ -15,6 +15,7 @@ import (
 func TestSecretHeaderFunctionality(t *testing.T) {
 	// Reset shared state between tests
 	plugin.ResetSharedCacheForTesting()
+	defer plugin.ResetSharedCacheForTesting()
 	time.Sleep(100 * time.Millisecond)
 
 	// Track received headers to verify plugin sends the secret header

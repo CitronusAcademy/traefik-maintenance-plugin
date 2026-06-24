@@ -14,6 +14,7 @@ import (
 func TestIPDetectionFromCfConnectingIp(t *testing.T) {
 	// Reset shared state between tests
 	plugin.ResetSharedCacheForTesting()
+	defer plugin.ResetSharedCacheForTesting()
 	time.Sleep(100 * time.Millisecond)
 
 	ts, regularEndpoint, _, _, _ := setupTestServer()
@@ -100,6 +101,7 @@ func TestIPDetectionFromCfConnectingIp(t *testing.T) {
 func TestCIDRWhitelist(t *testing.T) {
 	// Reset shared state between tests
 	plugin.ResetSharedCacheForTesting()
+	defer plugin.ResetSharedCacheForTesting()
 	time.Sleep(100 * time.Millisecond)
 
 	// Create custom test server with CIDR whitelist
@@ -200,6 +202,7 @@ func TestCIDRWhitelist(t *testing.T) {
 func TestIPv6WhitelistCanonicalization(t *testing.T) {
 	// Reset shared state between tests
 	plugin.ResetSharedCacheForTesting()
+	defer plugin.ResetSharedCacheForTesting()
 	time.Sleep(100 * time.Millisecond)
 
 	// Whitelist entries use non-canonical IPv6 forms (mixed case, expanded);
@@ -290,6 +293,7 @@ func TestIPv6WhitelistCanonicalization(t *testing.T) {
 func TestInvalidIPAndCIDRHandling(t *testing.T) {
 	// Reset shared state between tests
 	plugin.ResetSharedCacheForTesting()
+	defer plugin.ResetSharedCacheForTesting()
 	time.Sleep(100 * time.Millisecond)
 
 	// Create custom test server with invalid whitelist entries
@@ -399,6 +403,7 @@ func TestInvalidIPAndCIDRHandling(t *testing.T) {
 func TestCfConnectingIpHeader(t *testing.T) {
 	// Reset shared state between tests
 	plugin.ResetSharedCacheForTesting()
+	defer plugin.ResetSharedCacheForTesting()
 	time.Sleep(100 * time.Millisecond)
 
 	// Create test server with specific IP whitelist

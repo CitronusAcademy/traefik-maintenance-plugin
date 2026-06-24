@@ -14,6 +14,7 @@ import (
 func TestMaintenanceCheck(t *testing.T) {
 	// Reset shared state between tests
 	plugin.ResetSharedCacheForTesting()
+	defer plugin.ResetSharedCacheForTesting()
 	time.Sleep(100 * time.Millisecond)
 
 	ts, regularEndpoint, activeEndpoint, wildcardEndpoint, specificIPEndpoint := setupTestServer()
@@ -316,6 +317,7 @@ func TestMaintenanceCheck(t *testing.T) {
 func TestMaintenanceCheckEdgeCases(t *testing.T) {
 	// Reset shared state between tests
 	plugin.ResetSharedCacheForTesting()
+	defer plugin.ResetSharedCacheForTesting()
 	time.Sleep(100 * time.Millisecond)
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

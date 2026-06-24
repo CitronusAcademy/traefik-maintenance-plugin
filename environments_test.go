@@ -14,6 +14,7 @@ import (
 func TestKubernetesEnvironment(t *testing.T) {
 	// Reset shared state between tests
 	plugin.ResetSharedCacheForTesting()
+	defer plugin.ResetSharedCacheForTesting()
 	time.Sleep(100 * time.Millisecond)
 
 	// Set up test server with active maintenance mode
@@ -128,6 +129,7 @@ func TestKubernetesEnvironment(t *testing.T) {
 
 func TestProductionComDomainSupport(t *testing.T) {
 	plugin.ResetSharedCacheForTesting()
+	defer plugin.ResetSharedCacheForTesting()
 	time.Sleep(100 * time.Millisecond)
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -249,6 +251,7 @@ func TestProductionComDomainSupport(t *testing.T) {
 
 func TestConfigurationOverridesBehavior(t *testing.T) {
 	plugin.ResetSharedCacheForTesting()
+	defer plugin.ResetSharedCacheForTesting()
 	time.Sleep(100 * time.Millisecond)
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
