@@ -108,9 +108,19 @@ func ensureSharedCacheInitialized(environmentEndpoints map[string]string, enviro
 	sharedCache.secretHeaderValue = secretHeaderValue
 	sharedCache.Unlock()
 
-	// Diagnostic: an environment with no resolvable secret will receive no whitelist
-	// from a secret-gated API, locking out every operator the instant maintenance
-	// activates. Warn loudly at startup; this changes no behavior.
+	warnMissingSecrets(environmentEndpoints, environmentSecrets, secretHeader, secretHeaderValue)
+
+	warmupAllEnvironments(environmentEndpoints, debug)
+
+	startBackgroundRefresher()
+}
+
+// warnMissingSecrets logs a startup warning for any environment that has
+// neither a per-environment secret nor a usable top-level secret. A
+// secret-gated API returns no whitelist for such an environment, which would
+// lock out every operator the instant maintenance activates. Diagnostic only;
+// this changes no behavior.
+func warnMissingSecrets(environmentEndpoints map[string]string, environmentSecrets map[string]EnvironmentSecret, secretHeader, secretHeaderValue string) {
 	for envSuffix := range environmentEndpoints {
 		perEnv, ok := environmentSecrets[envSuffix]
 		hasPerEnv := ok && perEnv.Value != ""
@@ -123,8 +133,14 @@ func ensureSharedCacheInitialized(environmentEndpoints map[string]string, enviro
 			fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Warning: environment '%s' has no secret configured; a secret-gated API will return no whitelist and block all clients during maintenance\n", label)
 		}
 	}
+}
 
-	// Perform initial fetch for all environments
+// warmupAllEnvironments fetches every environment's maintenance status before
+// New returns, so no environment serves traffic with an unpopulated cache
+// during the startup window. Environments warm concurrently and the call waits
+// for all of them. An environment whose API is unreachable still gives up after
+// its retries (staying fail-open) — that is the intended availability posture.
+func warmupAllEnvironments(environmentEndpoints map[string]string, debug bool) {
 	if debug {
 		fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Performing initial fetch for all environments\n")
 	}
@@ -133,10 +149,6 @@ func ensureSharedCacheInitialized(environmentEndpoints map[string]string, enviro
 	warmupStopCh := sharedCache.stopCh
 	sharedCache.RUnlock()
 
-	// Warm every environment before New returns, so no environment serves traffic
-	// with an unpopulated cache during the startup window. Warm concurrently, then
-	// wait for all. An environment whose API is unreachable still gives up after its
-	// retries (staying fail-open) — that is the intended availability posture.
 	var warmupWG sync.WaitGroup
 	for envSuffix := range environmentEndpoints {
 		warmupWG.Add(1)
@@ -146,8 +158,6 @@ func ensureSharedCacheInitialized(environmentEndpoints map[string]string, enviro
 		}(envSuffix)
 	}
 	warmupWG.Wait()
-
-	startBackgroundRefresher()
 }
 
 // warmupEnvironment retries the initial fetch for one environment with
