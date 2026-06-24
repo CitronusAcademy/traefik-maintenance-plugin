@@ -4,7 +4,7 @@ import (
 	"time"
 )
 
-const defaultMaintenanceEndpoint = "http://maintenance-service.admin/v1/configurations/"
+const defaultMaintenanceEndpoint = "http://maintenance-service/v1/configurations/"
 
 type Config struct {
 	EnvironmentEndpoints     map[string]string            `json:"environmentEndpoints,omitempty"`
@@ -30,16 +30,10 @@ type EnvironmentSecret struct {
 func CreateConfig() *Config {
 	return &Config{
 		EnvironmentEndpoints: map[string]string{
-			".com":   defaultMaintenanceEndpoint,
-			".world": "http://maintenance-service.stage-admin/v1/configurations/",
-			".pro":   "http://maintenance-service.develop-admin/v1/configurations/",
-			"":       defaultMaintenanceEndpoint,
+			"": defaultMaintenanceEndpoint,
 		},
 		EnvironmentSecrets: map[string]EnvironmentSecret{
-			".com":   {Header: "X-Plugin-Secret", Value: ""},
-			".world": {Header: "X-Plugin-Secret", Value: ""},
-			".pro":   {Header: "X-Plugin-Secret", Value: ""},
-			"":       {Header: "X-Plugin-Secret", Value: ""},
+			"": {Header: "X-Plugin-Secret", Value: ""},
 		},
 		CacheDurationInSeconds:   10,
 		SkipPrefixes:             []string{},

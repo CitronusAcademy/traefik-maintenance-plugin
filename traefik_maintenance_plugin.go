@@ -40,10 +40,7 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 	environmentEndpoints := config.EnvironmentEndpoints
 	if len(environmentEndpoints) == 0 {
 		environmentEndpoints = map[string]string{
-			".com":   defaultMaintenanceEndpoint,
-			".world": "http://maintenance-service.stage-admin/v1/configurations/",
-			".pro":   "http://maintenance-service.develop-admin/v1/configurations/",
-			"":       defaultMaintenanceEndpoint,
+			"": defaultMaintenanceEndpoint,
 		}
 	}
 
