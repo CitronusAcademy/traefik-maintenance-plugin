@@ -177,7 +177,6 @@ func updateEnvironmentCache(envSuffix string, result *MaintenanceResponse, durat
 		copy(envCache.whitelist, result.SystemConfig.Maintenance.Whitelist)
 		envCache.expiry = time.Now().Add(duration)
 		envCache.failedAttempts = 0
-		envCache.lastSuccessfulFetch = time.Now()
 	} else {
 		envCache.expiry = time.Now().Add(duration)
 		envCache.failedAttempts = failedAttempts
@@ -240,7 +239,7 @@ func getEndpointForDomain(domain string) string {
 		return defaultEndpoint
 	}
 
-	return "http://maintenance-service.admin/v1/configurations/"
+	return defaultMaintenanceEndpoint
 }
 
 // CloseSharedCache should be called if you need to clean up resources

@@ -4,6 +4,8 @@ import (
 	"time"
 )
 
+const defaultMaintenanceEndpoint = "http://maintenance-service.admin/v1/configurations/"
+
 type Config struct {
 	EnvironmentEndpoints     map[string]string            `json:"environmentEndpoints,omitempty"`
 	EnvironmentSecrets       map[string]EnvironmentSecret `json:"environmentSecrets,omitempty"`
@@ -28,10 +30,10 @@ type EnvironmentSecret struct {
 func CreateConfig() *Config {
 	return &Config{
 		EnvironmentEndpoints: map[string]string{
-			".com":   "http://maintenance-service.admin/v1/configurations/",
+			".com":   defaultMaintenanceEndpoint,
 			".world": "http://maintenance-service.stage-admin/v1/configurations/",
 			".pro":   "http://maintenance-service.develop-admin/v1/configurations/",
-			"":       "http://maintenance-service.admin/v1/configurations/",
+			"":       defaultMaintenanceEndpoint,
 		},
 		EnvironmentSecrets: map[string]EnvironmentSecret{
 			".com":   {Header: "X-Plugin-Secret", Value: ""},
@@ -74,9 +76,8 @@ type MaintenanceResponse struct {
 }
 
 type EnvironmentCache struct {
-	isActive            bool
-	whitelist           []string
-	expiry              time.Time
-	failedAttempts      int
-	lastSuccessfulFetch time.Time
+	isActive       bool
+	whitelist      []string
+	expiry         time.Time
+	failedAttempts int
 }
