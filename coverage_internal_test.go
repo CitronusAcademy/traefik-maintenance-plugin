@@ -6,9 +6,27 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestStartupWarnsOnMissingSecret(t *testing.T) {
+	ResetSharedCacheForTesting()
+	defer ResetSharedCacheForTesting()
+
+	out := captureStdout(t, func() {
+		// No per-env secret value, no top-level secret value → unprotected env.
+		ensureSharedCacheInitialized(
+			map[string]string{"": "http://unused.invalid/"},
+			map[string]EnvironmentSecret{"": {Header: "X-Plugin-Secret", Value: ""}},
+			60*time.Second, 5*time.Second, false, "ua", "", "",
+		)
+	})
+	if !strings.Contains(out, "no secret") {
+		t.Fatalf("expected a missing-secret warning, got: %q", out)
+	}
+}
 
 func TestNewDoesNotLeakGoroutinePerInstance(t *testing.T) {
 	ResetSharedCacheForTesting()

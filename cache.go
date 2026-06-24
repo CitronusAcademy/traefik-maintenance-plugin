@@ -108,6 +108,22 @@ func ensureSharedCacheInitialized(environmentEndpoints map[string]string, enviro
 	sharedCache.secretHeaderValue = secretHeaderValue
 	sharedCache.Unlock()
 
+	// Diagnostic: an environment with no resolvable secret will receive no whitelist
+	// from a secret-gated API, locking out every operator the instant maintenance
+	// activates. Warn loudly at startup; this changes no behavior.
+	for envSuffix := range environmentEndpoints {
+		perEnv, ok := environmentSecrets[envSuffix]
+		hasPerEnv := ok && perEnv.Value != ""
+		hasTopLevel := secretHeader != "" && secretHeaderValue != ""
+		if !hasPerEnv && !hasTopLevel {
+			label := envSuffix
+			if label == "" {
+				label = "(default)"
+			}
+			fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Warning: environment '%s' has no secret configured; a secret-gated API will return no whitelist and block all clients during maintenance\n", label)
+		}
+	}
+
 	// Perform initial fetch for all environments
 	if debug {
 		fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Performing initial fetch for all environments\n")
