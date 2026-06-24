@@ -6,12 +6,12 @@ import (
 	"os"
 )
 
-func (m *MaintenanceCheck) handleCORSPreflightRequest(rw http.ResponseWriter, req *http.Request) bool {
+func (m *MaintenanceCheck) handleCORSPreflightRequest(rw http.ResponseWriter, req *http.Request, normalizedHost string) bool {
 	if req.Method != http.MethodOptions {
 		return false
 	}
 
-	isActive, whitelist := getMaintenanceStatusForDomain(m.extractHostWithoutPort(req.Host))
+	isActive, whitelist := getMaintenanceStatusForDomain(normalizedHost)
 	if !isActive {
 		return false
 	}

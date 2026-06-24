@@ -109,7 +109,7 @@ func (m *MaintenanceCheck) ServeHTTP(rw http.ResponseWriter, req *http.Request) 
 		return
 	}
 
-	if m.handleCORSPreflightRequest(rw, req) {
+	if m.handleCORSPreflightRequest(rw, req, normalizedHost) {
 		return
 	}
 
