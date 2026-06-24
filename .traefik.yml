@@ -7,20 +7,17 @@ import: github.com/CitronusAcademy/traefik-maintenance-plugin
 summary: "A middleware that checks if a service is in maintenance mode and returns an appropriate status code"
 
 testData:
-  endpoint: "https://api.citronus.pro/admin/api/system-config/?format=json"
+  endpoint: "http://maintenance-service/v1/configurations/"
   cacheDurationInSeconds: 10
   requestTimeoutInSeconds: 5
   maintenanceStatusCode: 512
   skipPrefixes:
     - "/admin"
-    - "/pgadmin"
   skipHosts:
-    - pgadmin.citronus.pro
-    - grafana.citronus.pro
-    - rabbitmq.citronus.pro
-    - traefik.citronus.pro
-    - "*.citronus.world"
+    - admin.example.com
+    - monitoring.example.com
+    - "*.internal.example.com"
   secretHeader: "X-Plugin-Secret"
-  secretHeaderValue: "maintenance-plugin-secret-token"
+  secretHeaderValue: "example-secret-token"
 
 id: maintenanceCheck
