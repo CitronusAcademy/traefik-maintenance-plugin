@@ -174,33 +174,8 @@ func (m *MaintenanceCheck) isClientAllowed(req *http.Request, whitelist []string
 		}
 
 		for _, whitelistEntry := range whitelist {
-			// Exact match (IPv6-canonical via net.ParseIP; non-IP entries compared raw)
-			if ipExactMatch(clientIP, whitelistEntry) {
-				if m.debug {
-					fmt.Fprintf(os.Stdout, "[MaintenanceCheck] IP '%s' matches whitelist entry '%s', allowing request\n", clientIP, whitelistEntry)
-				}
+			if m.matchWhitelistEntry(clientIP, whitelistEntry) {
 				return true
-			}
-
-			// CIDR notation match
-			if strings.Contains(whitelistEntry, "/") {
-				if m.debug {
-					fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Checking if IP '%s' is in CIDR range '%s'\n", clientIP, whitelistEntry)
-				}
-
-				match, err := isCIDRMatch(clientIP, whitelistEntry)
-				if err != nil {
-					if m.debug {
-						fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Error checking CIDR match: %v\n", err)
-					}
-				} else if match {
-					if m.debug {
-						fmt.Fprintf(os.Stdout, "[MaintenanceCheck] IP '%s' is in CIDR range '%s', allowing request\n", clientIP, whitelistEntry)
-					}
-					return true
-				} else if m.debug {
-					fmt.Fprintf(os.Stdout, "[MaintenanceCheck] IP '%s' is NOT in CIDR range '%s'\n", clientIP, whitelistEntry)
-				}
 			}
 		}
 	}
@@ -208,6 +183,43 @@ func (m *MaintenanceCheck) isClientAllowed(req *http.Request, whitelist []string
 	if m.debug {
 		fmt.Fprintf(os.Stdout, "[MaintenanceCheck] None of the client IPs %v matched whitelist, blocking request\n", clientIPs)
 	}
+	return false
+}
+
+// matchWhitelistEntry reports whether clientIP satisfies a single whitelist
+// entry: an exact IP match (IPv6-canonical via ipExactMatch) or, for an entry
+// in CIDR notation, a range match. It does not handle the "*" wildcard — the
+// caller checks that before iterating entries.
+func (m *MaintenanceCheck) matchWhitelistEntry(clientIP, whitelistEntry string) bool {
+	// Exact match (IPv6-canonical via net.ParseIP; non-IP entries compared raw)
+	if ipExactMatch(clientIP, whitelistEntry) {
+		if m.debug {
+			fmt.Fprintf(os.Stdout, "[MaintenanceCheck] IP '%s' matches whitelist entry '%s', allowing request\n", clientIP, whitelistEntry)
+		}
+		return true
+	}
+
+	// CIDR notation match
+	if strings.Contains(whitelistEntry, "/") {
+		if m.debug {
+			fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Checking if IP '%s' is in CIDR range '%s'\n", clientIP, whitelistEntry)
+		}
+
+		match, err := isCIDRMatch(clientIP, whitelistEntry)
+		if err != nil {
+			if m.debug {
+				fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Error checking CIDR match: %v\n", err)
+			}
+		} else if match {
+			if m.debug {
+				fmt.Fprintf(os.Stdout, "[MaintenanceCheck] IP '%s' is in CIDR range '%s', allowing request\n", clientIP, whitelistEntry)
+			}
+			return true
+		} else if m.debug {
+			fmt.Fprintf(os.Stdout, "[MaintenanceCheck] IP '%s' is NOT in CIDR range '%s'\n", clientIP, whitelistEntry)
+		}
+	}
+
 	return false
 }
 
