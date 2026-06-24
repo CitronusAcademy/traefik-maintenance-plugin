@@ -211,6 +211,24 @@ func updateEnvironmentCache(envSuffix string, result *MaintenanceResponse, durat
 	}
 }
 
+// resolveEnvSuffix returns the longest non-empty configured suffix that matches
+// domain, or "" if none match (the caller uses "" as the default-environment
+// key). Longest-match makes routing deterministic regardless of Go's
+// randomized map iteration order, so the status lookup and the endpoint lookup
+// always agree on the environment.
+func resolveEnvSuffix(domain string, endpoints map[string]string) string {
+	best := ""
+	for suffix := range endpoints {
+		if suffix == "" {
+			continue
+		}
+		if strings.HasSuffix(domain, suffix) && len(suffix) > len(best) {
+			best = suffix
+		}
+	}
+	return best
+}
+
 func getMaintenanceStatusForDomain(domain string) (bool, []string) {
 	sharedCache.RLock()
 	defer sharedCache.RUnlock()
@@ -219,20 +237,7 @@ func getMaintenanceStatusForDomain(domain string) (bool, []string) {
 		return false, []string{}
 	}
 
-	var envSuffix string
-	for suffix := range sharedCache.environmentEndpoints {
-		if suffix == "" {
-			continue
-		}
-		if strings.HasSuffix(domain, suffix) {
-			envSuffix = suffix
-			break
-		}
-	}
-
-	if envSuffix == "" {
-		envSuffix = ""
-	}
+	envSuffix := resolveEnvSuffix(domain, sharedCache.environmentEndpoints)
 
 	envCache, exists := sharedCache.environments[envSuffix]
 	if !exists {
@@ -254,13 +259,8 @@ func getEndpointForDomain(domain string) string {
 	sharedCache.RLock()
 	defer sharedCache.RUnlock()
 
-	for suffix, endpoint := range sharedCache.environmentEndpoints {
-		if suffix == "" {
-			continue
-		}
-		if strings.HasSuffix(domain, suffix) {
-			return endpoint
-		}
+	if suffix := resolveEnvSuffix(domain, sharedCache.environmentEndpoints); suffix != "" {
+		return sharedCache.environmentEndpoints[suffix]
 	}
 
 	if defaultEndpoint, exists := sharedCache.environmentEndpoints[""]; exists {
