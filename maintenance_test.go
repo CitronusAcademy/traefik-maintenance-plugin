@@ -323,9 +323,15 @@ func TestMaintenanceCheckEdgeCases(t *testing.T) {
 
 		switch r.URL.Path {
 		case "/slow-response":
-			time.Sleep(200 * time.Millisecond)
+			// Sleep longer than the 1s request timeout so every fetch is
+			// cancelled mid-flight — this is what exercises the timeout path.
+			// Return active with a whitelist that does NOT match the header-less
+			// test request: if this body were ever honored (timeout not firing),
+			// the request would be blocked (512), so a 200 proves we fell open on
+			// the timeout rather than applying this response.
+			time.Sleep(1200 * time.Millisecond)
 			response.SystemConfig.Maintenance.IsActive = true
-			response.SystemConfig.Maintenance.Whitelist = []string{"*"} // Allow all for timeouts
+			response.SystemConfig.Maintenance.Whitelist = []string{"10.99.99.99"}
 		case "/invalid-json":
 			w.Header().Set("Content-Type", "application/json")
 			w.Write([]byte(`{"invalid json`))
@@ -356,7 +362,7 @@ func TestMaintenanceCheckEdgeCases(t *testing.T) {
 			cacheDurationInSeconds:  10,
 			requestTimeoutInSeconds: 1,
 			expectedCode:            http.StatusOK,
-			description:             "When API request times out, should use cached values and allow request",
+			description:             "When every API fetch times out at cold start, the plugin stays fail-open and allows the request",
 		},
 		{
 			name:                    "Invalid JSON handling",
@@ -396,34 +402,9 @@ func TestMaintenanceCheckEdgeCases(t *testing.T) {
 				t.Fatalf("Error creating plugin: %v", err)
 			}
 
-			// First, make a normal request to cache the response
-			if tt.name == "Timeout handling" {
-				// Use a fast endpoint to pre-populate the cache with maintenance inactive
-				plugin.ResetSharedCacheForTesting()
-				time.Sleep(100 * time.Millisecond)
-
-				fastCfg := plugin.CreateConfig()
-				fastCfg.EnvironmentEndpoints = map[string]string{"": ts.URL} // Use fast endpoint temporarily
-				fastCfg.CacheDurationInSeconds = 10
-				fastCfg.RequestTimeoutInSeconds = 5
-
-				fastHandler, _ := plugin.New(context.Background(), next, fastCfg, "fast-test")
-				fastReq := httptest.NewRequest(http.MethodGet, "http://localhost/", nil)
-				fastRec := httptest.NewRecorder()
-				fastHandler.ServeHTTP(fastRec, fastReq)
-
-				// Allow time for initial fetch to complete
-				time.Sleep(100 * time.Millisecond)
-
-				// Now create the handler with the original endpoint
-				plugin.ResetSharedCacheForTesting()
-				time.Sleep(100 * time.Millisecond)
-
-				handler, err = plugin.New(context.Background(), next, cfg, "maintenance-test")
-				if err != nil {
-					t.Fatalf("Error creating plugin: %v", err)
-				}
-			}
+			// For the timeout case, New above already drove the synchronous warmup:
+			// every fetch against /slow-response is cancelled at the 1s timeout, so
+			// no maintenance state is ever cached and the plugin must fail open.
 
 			// Allow time for initial fetch to complete or timeout
 			time.Sleep(100 * time.Millisecond)
