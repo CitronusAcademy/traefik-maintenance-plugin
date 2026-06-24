@@ -115,6 +115,8 @@ func refreshMaintenanceStatusForEnvironment(envSuffix string) bool {
 		fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Fetching maintenance status from '%s' for environment '%s'\n", endpoint, envSuffix)
 	}
 
+	// A nil client (cache torn down by CloseSharedCache) is not a fetch failure:
+	// skip without applying backoff or touching the cached state.
 	if client == nil {
 		if debug {
 			fmt.Fprintf(os.Stdout, "[MaintenanceCheck] HTTP client is nil, skipping refresh\n")
@@ -122,6 +124,30 @@ func refreshMaintenanceStatusForEnvironment(envSuffix string) bool {
 		return false
 	}
 
+	result, ok := fetchMaintenanceState(client, endpoint, userAgent, secretHeader, secretHeaderValue, requestTimeout, envSuffix, debug)
+	if !ok {
+		backoffTime := calculateBackoff(currentFailedAttempts)
+		updateEnvironmentCache(envSuffix, nil, backoffTime, currentFailedAttempts+1, false)
+		return false
+	}
+
+	updateEnvironmentCache(envSuffix, result, cacheDuration, 0, true)
+
+	if debug {
+		fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Successfully updated maintenance status for environment '%s': active=%v, whitelist count=%d\n",
+			envSuffix, result.SystemConfig.Maintenance.IsActive, len(result.SystemConfig.Maintenance.Whitelist))
+	}
+
+	return true
+}
+
+// fetchMaintenanceState performs a single maintenance-status request against
+// endpoint and returns the decoded response. The bool is false for any
+// failure the caller should treat as a failed fetch — request build error,
+// transport error, non-200 status, decode error, or a 200 whose body carries
+// no maintenance object — at which point the caller applies backoff and keeps
+// the prior cached state. The caller is responsible for the nil-client check.
+func fetchMaintenanceState(client *http.Client, endpoint, userAgent, secretHeader, secretHeaderValue string, requestTimeout time.Duration, envSuffix string, debug bool) (*MaintenanceResponse, bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 	defer cancel()
 
@@ -130,10 +156,7 @@ func refreshMaintenanceStatusForEnvironment(envSuffix string) bool {
 		if debug {
 			fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Error creating request: %v\n", err)
 		}
-
-		backoffTime := calculateBackoff(currentFailedAttempts)
-		updateEnvironmentCache(envSuffix, nil, backoffTime, currentFailedAttempts+1, false)
-		return false
+		return nil, false
 	}
 
 	req.Header.Set("User-Agent", userAgent)
@@ -150,10 +173,7 @@ func refreshMaintenanceStatusForEnvironment(envSuffix string) bool {
 		if debug {
 			fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Error making request: %v\n", err)
 		}
-
-		backoffTime := calculateBackoff(currentFailedAttempts)
-		updateEnvironmentCache(envSuffix, nil, backoffTime, currentFailedAttempts+1, false)
-		return false
+		return nil, false
 	}
 
 	// client.Do guarantees resp != nil and resp.Body != nil when err == nil.
@@ -169,10 +189,7 @@ func refreshMaintenanceStatusForEnvironment(envSuffix string) bool {
 		if debug {
 			fmt.Fprintf(os.Stdout, "[MaintenanceCheck] API returned status code: %d\n", resp.StatusCode)
 		}
-
-		backoffTime := calculateBackoff(currentFailedAttempts)
-		updateEnvironmentCache(envSuffix, nil, backoffTime, currentFailedAttempts+1, false)
-		return false
+		return nil, false
 	}
 
 	const maxResponseSize = 10 * 1024 * 1024
@@ -184,10 +201,7 @@ func refreshMaintenanceStatusForEnvironment(envSuffix string) bool {
 		if debug {
 			fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Error parsing JSON: %v\n", err)
 		}
-
-		backoffTime := calculateBackoff(currentFailedAttempts)
-		updateEnvironmentCache(envSuffix, nil, backoffTime, currentFailedAttempts+1, false)
-		return false
+		return nil, false
 	}
 
 	// A 200 whose body lacks system_config/maintenance (e.g. {}, an error
@@ -199,20 +213,10 @@ func refreshMaintenanceStatusForEnvironment(envSuffix string) bool {
 		if debug {
 			fmt.Fprintf(os.Stdout, "[MaintenanceCheck] 200 response for environment '%s' carried no maintenance state; treating as a failed fetch\n", envSuffix)
 		}
-
-		backoffTime := calculateBackoff(currentFailedAttempts)
-		updateEnvironmentCache(envSuffix, nil, backoffTime, currentFailedAttempts+1, false)
-		return false
+		return nil, false
 	}
 
-	updateEnvironmentCache(envSuffix, &result, cacheDuration, 0, true)
-
-	if debug {
-		fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Successfully updated maintenance status for environment '%s': active=%v, whitelist count=%d\n",
-			envSuffix, result.SystemConfig.Maintenance.IsActive, len(result.SystemConfig.Maintenance.Whitelist))
-	}
-
-	return true
+	return &result, true
 }
 
 // calculateBackoff returns an exponential backoff duration with jitter
