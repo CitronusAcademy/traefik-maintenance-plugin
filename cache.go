@@ -9,24 +9,26 @@ import (
 	"time"
 )
 
-// sharedCache holds maintenance status for multiple environments
+// sharedCacheState holds maintenance status for multiple environments.
+type sharedCacheState struct {
+	sync.RWMutex
+	environments         map[string]*EnvironmentCache
+	environmentEndpoints map[string]string
+	environmentSecrets   map[string]EnvironmentSecret
+	cacheDuration        time.Duration
+	requestTimeout       time.Duration
+	client               *http.Client
+	debug                bool
+	initialized          bool
+	refresherRunning     bool
+	stopCh               chan struct{}
+	userAgent            string
+	secretHeader         string
+	secretHeaderValue    string
+}
+
 var (
-	sharedCache struct {
-		sync.RWMutex
-		environments         map[string]*EnvironmentCache
-		environmentEndpoints map[string]string
-		environmentSecrets   map[string]EnvironmentSecret
-		cacheDuration        time.Duration
-		requestTimeout       time.Duration
-		client               *http.Client
-		debug                bool
-		initialized          bool
-		refresherRunning     bool
-		stopCh               chan struct{}
-		userAgent            string
-		secretHeader         string
-		secretHeaderValue    string
-	}
+	sharedCache  sharedCacheState
 	initLock     sync.Mutex
 	envLocksMu   sync.Mutex
 	envLocks     = make(map[string]*sync.Mutex)
@@ -293,22 +295,7 @@ func ResetSharedCacheForTesting() {
 		}
 	}
 
-	sharedCache = struct {
-		sync.RWMutex
-		environments         map[string]*EnvironmentCache
-		environmentEndpoints map[string]string
-		environmentSecrets   map[string]EnvironmentSecret
-		cacheDuration        time.Duration
-		requestTimeout       time.Duration
-		client               *http.Client
-		debug                bool
-		initialized          bool
-		refresherRunning     bool
-		stopCh               chan struct{}
-		userAgent            string
-		secretHeader         string
-		secretHeaderValue    string
-	}{}
+	sharedCache = sharedCacheState{}
 
 	shutdownOnce = sync.Once{}
 }

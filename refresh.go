@@ -197,7 +197,7 @@ func refreshMaintenanceStatusForEnvironment(envSuffix string) bool {
 	isActive := result.SystemConfig.Maintenance.IsActive
 	whitelist := result.SystemConfig.Maintenance.Whitelist
 
-	updateEnvironmentCache(envSuffix, &MaintenanceResponse{result.SystemConfig}, cacheDuration, 0, true)
+	updateEnvironmentCache(envSuffix, &result, cacheDuration, 0, true)
 
 	if debug {
 		fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Successfully updated maintenance status for environment '%s': active=%v, whitelist count=%d\n",

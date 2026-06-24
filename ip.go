@@ -196,7 +196,7 @@ func isCIDRMatch(ip, cidr string) (bool, error) {
 	// Parse the CIDR notation
 	_, ipNet, err := net.ParseCIDR(cidr)
 	if err != nil {
-		return false, fmt.Errorf("invalid CIDR notation %s: %v", cidr, err)
+		return false, fmt.Errorf("invalid CIDR notation %s: %w", cidr, err)
 	}
 
 	// Parse the IP
