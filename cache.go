@@ -276,23 +276,29 @@ func ResetSharedCacheForTesting() {
 	envLocks = make(map[string]*sync.Mutex)
 	envLocksMu.Unlock()
 
+	// Signal the refresher to stop. CloseSharedCache may have already closed
+	// stopCh (and cleared initialized); only close it here if it is still open,
+	// to avoid a double close.
 	if sharedCache.initialized && sharedCache.stopCh != nil {
 		close(sharedCache.stopCh)
+	}
 
-		time.Sleep(300 * time.Millisecond)
+	// Always wait (under the RWMutex) for the refresher goroutine to observe the
+	// stop and clear refresherRunning before overwriting sharedCache. Reading the
+	// flag under RLock establishes a happens-before edge with the goroutine's
+	// final write, so the lock-free wholesale reset below cannot race it — this
+	// holds even when CloseSharedCache already cleared initialized.
+	maxWait := 1 * time.Second
+	startTime := time.Now()
+	for time.Since(startTime) < maxWait {
+		sharedCache.RLock()
+		isRunning := sharedCache.refresherRunning
+		sharedCache.RUnlock()
 
-		maxWait := 1 * time.Second
-		startTime := time.Now()
-		for time.Since(startTime) < maxWait {
-			sharedCache.RLock()
-			isRunning := sharedCache.refresherRunning
-			sharedCache.RUnlock()
-
-			if !isRunning {
-				break
-			}
-			time.Sleep(50 * time.Millisecond)
+		if !isRunning {
+			break
 		}
+		time.Sleep(10 * time.Millisecond)
 	}
 
 	sharedCache = sharedCacheState{}
