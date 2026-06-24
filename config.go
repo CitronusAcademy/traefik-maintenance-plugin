@@ -22,6 +22,7 @@ type Config struct {
 	AllowedOrigins           []string                     `json:"allowedOrigins,omitempty"`
 	CorsAllowAnyOrigin       bool                         `json:"corsAllowAnyOrigin,omitempty"`
 	TrustedProxies           []string                     `json:"trustedProxies,omitempty"`
+	StrictAssetMatching      bool                         `json:"strictAssetMatching,omitempty"`
 }
 
 type EnvironmentSecret struct {

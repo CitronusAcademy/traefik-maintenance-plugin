@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path"
 	"strings"
 )
 
@@ -78,7 +79,13 @@ func isHTMLRequest(req *http.Request) bool {
 // used to optionally let static assets (JS/CSS/images/fonts, etc.) through
 // during maintenance without whitelisting. The extensions are already
 // normalized (lowercased, trimmed, no empties) at construction time.
-func isStaticAssetRequest(req *http.Request, extensions []string) bool {
+//
+// When strict is false (the default) the whole path is suffix-matched, so any
+// path crafted to end in an allowed extension (e.g. "/api/export.css") is let
+// through. When strict is true only a genuine file extension on the last path
+// segment is matched (via path.Ext), closing that bypass at the cost of also
+// requiring real asset paths to carry their extension on the final segment.
+func isStaticAssetRequest(req *http.Request, extensions []string, strict bool) bool {
 	if req == nil {
 		return false
 	}
@@ -91,9 +98,23 @@ func isStaticAssetRequest(req *http.Request, extensions []string) bool {
 		return false
 	}
 
-	path := strings.ToLower(req.URL.Path)
+	if strict {
+		// Only the last path segment's real extension counts.
+		ext := strings.ToLower(path.Ext(req.URL.Path))
+		if ext == "" {
+			return false
+		}
+		for _, allowed := range extensions {
+			if ext == allowed {
+				return true
+			}
+		}
+		return false
+	}
+
+	pathLower := strings.ToLower(req.URL.Path)
 	for _, ext := range extensions {
-		if strings.HasSuffix(path, ext) {
+		if strings.HasSuffix(pathLower, ext) {
 			return true
 		}
 	}

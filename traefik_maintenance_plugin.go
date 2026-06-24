@@ -21,6 +21,7 @@ type MaintenanceCheck struct {
 	allowedOrigins        []string
 	corsAllowAnyOrigin    bool
 	trustedProxies        []*net.IPNet
+	strictAssetMatching   bool
 }
 
 func New(_ context.Context, next http.Handler, config *Config, name string) (http.Handler, error) {
@@ -104,6 +105,7 @@ func New(_ context.Context, next http.Handler, config *Config, name string) (htt
 		allowedOrigins:        allowedOriginsCopy,
 		corsAllowAnyOrigin:    config.CorsAllowAnyOrigin,
 		trustedProxies:        trustedProxies,
+		strictAssetMatching:   config.StrictAssetMatching,
 	}
 
 	return m, nil
@@ -157,7 +159,7 @@ func (m *MaintenanceCheck) ServeHTTP(rw http.ResponseWriter, req *http.Request) 
 			return
 		}
 
-		if isStaticAssetRequest(req, m.allowStaticExts) {
+		if isStaticAssetRequest(req, m.allowStaticExts, m.strictAssetMatching) {
 			if m.debug {
 				fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Maintenance active but path '%s' matches allowed static extensions, bypassing maintenance check\n", req.URL.Path)
 			}
