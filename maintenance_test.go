@@ -2176,3 +2176,49 @@ func TestTopLevelSecretUsedWhenPerSuffixValueEmpty(t *testing.T) {
 		t.Fatal("maintenance API was never called")
 	}
 }
+
+func TestPreflightToSkippedHostIsForwarded(t *testing.T) {
+	plugin.ResetSharedCacheForTesting()
+	defer plugin.ResetSharedCacheForTesting()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"system_config":{"maintenance":{"is_active":true,"whitelist":[]}}}`))
+	}))
+	defer srv.Close()
+
+	cfg := plugin.CreateConfig()
+	cfg.MaintenanceStatusCode = 512
+	cfg.CacheDurationInSeconds = 30
+	cfg.RequestTimeoutInSeconds = 5
+	cfg.EnvironmentEndpoints = map[string]string{".world": srv.URL}
+	cfg.SkipHosts = []string{"health.world"}
+
+	const forwardedCode = 299
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(forwardedCode) })
+	h, err := plugin.New(context.Background(), next, cfg, "test")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	// Wait for maintenance to be cached active.
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "http://example.world/api", nil)
+		h.ServeHTTP(rec, req)
+		if rec.Code == 512 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodOptions, "http://health.world/api", nil)
+	req.Host = "health.world"
+	req.Header.Set("Origin", "https://health.world")
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != forwardedCode {
+		t.Fatalf("OPTIONS to skip-listed host: expected forward (%d), got %d", forwardedCode, rec.Code)
+	}
+}

@@ -83,10 +83,6 @@ func (m *MaintenanceCheck) ServeHTTP(rw http.ResponseWriter, req *http.Request) 
 		return
 	}
 
-	if m.handleCORSPreflightRequest(rw, req) {
-		return
-	}
-
 	m.logRequestHeadersForDebugging(req)
 
 	normalizedHost := m.extractHostWithoutPort(req.Host)
@@ -108,6 +104,10 @@ func (m *MaintenanceCheck) ServeHTTP(rw http.ResponseWriter, req *http.Request) 
 			fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Path '%s' matches skip prefix, bypassing maintenance check\n", req.URL.Path)
 		}
 		m.next.ServeHTTP(rw, req)
+		return
+	}
+
+	if m.handleCORSPreflightRequest(rw, req) {
 		return
 	}
 
