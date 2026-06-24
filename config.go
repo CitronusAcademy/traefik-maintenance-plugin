@@ -17,6 +17,7 @@ type Config struct {
 	Debug                    bool                         `json:"debug,omitempty"`
 	SecretHeader             string                       `json:"secretHeader,omitempty"`
 	SecretHeaderValue        string                       `json:"secretHeaderValue,omitempty"`
+	AllowedOrigins           []string                     `json:"allowedOrigins,omitempty"`
 }
 
 type EnvironmentSecret struct {

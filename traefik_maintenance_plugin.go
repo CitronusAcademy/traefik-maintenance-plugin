@@ -16,6 +16,7 @@ type MaintenanceCheck struct {
 	allowStaticExts       []string
 	maintenanceStatusCode int
 	debug                 bool
+	allowedOrigins        []string
 }
 
 func New(ctx context.Context, next http.Handler, config *Config, name string) (http.Handler, error) {
@@ -57,6 +58,9 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 	staticExtsCopy := make([]string, len(config.AllowStaticExtensions))
 	copy(staticExtsCopy, config.AllowStaticExtensions)
 
+	allowedOriginsCopy := make([]string, len(config.AllowedOrigins))
+	copy(allowedOriginsCopy, config.AllowedOrigins)
+
 	m := &MaintenanceCheck{
 		next:                  next,
 		skipPrefixes:          skipPrefixesCopy,
@@ -65,6 +69,7 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		allowStaticExts:       staticExtsCopy,
 		maintenanceStatusCode: config.MaintenanceStatusCode,
 		debug:                 config.Debug,
+		allowedOrigins:        allowedOriginsCopy,
 	}
 
 	go func() {

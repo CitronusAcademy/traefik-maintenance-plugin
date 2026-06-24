@@ -2222,3 +2222,57 @@ func TestPreflightToSkippedHostIsForwarded(t *testing.T) {
 		t.Fatalf("OPTIONS to skip-listed host: expected forward (%d), got %d", forwardedCode, rec.Code)
 	}
 }
+
+func TestDisallowedOriginNotReflected(t *testing.T) {
+	plugin.ResetSharedCacheForTesting()
+	defer plugin.ResetSharedCacheForTesting()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"system_config":{"maintenance":{"is_active":true,"whitelist":[]}}}`))
+	}))
+	defer srv.Close()
+
+	cfg := plugin.CreateConfig()
+	cfg.MaintenanceStatusCode = 512
+	cfg.CacheDurationInSeconds = 30
+	cfg.RequestTimeoutInSeconds = 5
+	cfg.EnvironmentEndpoints = map[string]string{".world": srv.URL}
+	cfg.AllowedOrigins = []string{"https://app.world"}
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	h, err := plugin.New(context.Background(), next, cfg, "test")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "http://example.world/api", nil)
+		h.ServeHTTP(rec, req)
+		if rec.Code == 512 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	// Disallowed origin must NOT be reflected.
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodOptions, "http://example.world/api", nil)
+	req.Host = "example.world"
+	req.Header.Set("Origin", "https://evil.example")
+	h.ServeHTTP(rec, req)
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Fatalf("disallowed origin reflected: ACAO=%q", got)
+	}
+
+	// Allowed origin still reflected.
+	rec2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodOptions, "http://example.world/api", nil)
+	req2.Host = "example.world"
+	req2.Header.Set("Origin", "https://app.world")
+	h.ServeHTTP(rec2, req2)
+	if got := rec2.Header().Get("Access-Control-Allow-Origin"); got != "https://app.world" {
+		t.Fatalf("allowed origin not reflected: ACAO=%q", got)
+	}
+}

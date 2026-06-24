@@ -28,26 +28,36 @@ func (m *MaintenanceCheck) handleCORSPreflightRequest(rw http.ResponseWriter, re
 	return true
 }
 
-func (m *MaintenanceCheck) setCORSPreflightHeaders(rw http.ResponseWriter, origin string) {
-	if origin == "" {
+func (m *MaintenanceCheck) originAllowed(origin string) bool {
+	if len(m.allowedOrigins) == 0 {
+		return true // back-compat: no allow-list configured → reflect any origin
+	}
+	for _, o := range m.allowedOrigins {
+		if o == origin {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *MaintenanceCheck) writeCORSHeaders(rw http.ResponseWriter, origin string) {
+	if origin == "" || !m.originAllowed(origin) {
 		return
 	}
 
-	corsHeaders := map[string]string{
-		"Access-Control-Allow-Origin":      origin,
-		"Access-Control-Allow-Methods":     "GET, POST, PUT, DELETE, OPTIONS",
-		"Access-Control-Allow-Headers":     "Accept, Authorization, Content-Type, X-CSRF-Token",
-		"Access-Control-Allow-Credentials": "true",
-		"Access-Control-Max-Age":           "86400",
-	}
-
-	for headerName, headerValue := range corsHeaders {
-		rw.Header().Set(headerName, headerValue)
-	}
+	rw.Header().Set("Access-Control-Allow-Origin", origin)
+	rw.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+	rw.Header().Set("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type, X-CSRF-Token")
+	rw.Header().Set("Access-Control-Allow-Credentials", "true")
+	rw.Header().Set("Access-Control-Max-Age", "86400")
 
 	if m.debug {
-		fmt.Fprintf(os.Stdout, "[MaintenanceCheck] CORS preflight handled for origin: %s\n", origin)
+		fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Wrote CORS headers for origin: %s\n", origin)
 	}
+}
+
+func (m *MaintenanceCheck) setCORSPreflightHeaders(rw http.ResponseWriter, origin string) {
+	m.writeCORSHeaders(rw, origin)
 }
 
 func (m *MaintenanceCheck) sendBlockedPreflightResponse(rw http.ResponseWriter) {
@@ -76,18 +86,5 @@ func (m *MaintenanceCheck) sendMaintenanceResponseWithCORS(rw http.ResponseWrite
 }
 
 func (m *MaintenanceCheck) addCORSHeadersToMaintenanceResponse(rw http.ResponseWriter, req *http.Request) {
-	clientOrigin := req.Header.Get("Origin")
-	if clientOrigin == "" {
-		return
-	}
-
-	rw.Header().Set("Access-Control-Allow-Origin", clientOrigin)
-	rw.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-	rw.Header().Set("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type, X-CSRF-Token")
-	rw.Header().Set("Access-Control-Allow-Credentials", "true")
-	rw.Header().Set("Access-Control-Max-Age", "86400")
-
-	if m.debug {
-		fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Added CORS headers to maintenance response for origin: %s\n", clientOrigin)
-	}
+	m.writeCORSHeaders(rw, req.Header.Get("Origin"))
 }
