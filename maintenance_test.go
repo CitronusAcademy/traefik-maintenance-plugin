@@ -1047,6 +1047,96 @@ func TestCIDRWhitelist(t *testing.T) {
 	}
 }
 
+func TestIPv6WhitelistCanonicalization(t *testing.T) {
+	// Reset shared state between tests
+	plugin.ResetSharedCacheForTesting()
+	time.Sleep(100 * time.Millisecond)
+
+	// Whitelist entries use non-canonical IPv6 forms (mixed case, expanded);
+	// the plugin must still match canonical/compressed client IPs.
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		response := maintenanceResponse{}
+		response.SystemConfig.Maintenance.IsActive = true
+		response.SystemConfig.Maintenance.Whitelist = []string{
+			"2001:DB8::1", // upper-case
+			"2001:0db8:0000:0000:0000:0000:0000:0002", // fully expanded
+			"office", // non-IP entry, must stay exact-string
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
+	}))
+	defer ts.Close()
+
+	cfg := plugin.CreateConfig()
+	cfg.EnvironmentEndpoints = map[string]string{"": ts.URL}
+	cfg.CacheDurationInSeconds = 10
+	cfg.RequestTimeoutInSeconds = 5
+	cfg.MaintenanceStatusCode = 503
+	cfg.Debug = false
+
+	next := http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+		rw.WriteHeader(http.StatusOK)
+	})
+
+	handler, err := plugin.New(context.Background(), next, cfg, "ipv6-canon-test")
+	if err != nil {
+		t.Fatalf("Error creating plugin: %v", err)
+	}
+
+	// Allow time for initial fetch to complete
+	time.Sleep(200 * time.Millisecond)
+
+	tests := []struct {
+		name           string
+		clientIP       string
+		expectedStatus int
+		description    string
+	}{
+		{
+			name:           "upper-case entry matches canonical client",
+			clientIP:       "2001:db8::1",
+			expectedStatus: http.StatusOK,
+			description:    "2001:DB8::1 whitelist entry should match 2001:db8::1 client",
+		},
+		{
+			name:           "expanded entry matches compressed client",
+			clientIP:       "2001:db8::2",
+			expectedStatus: http.StatusOK,
+			description:    "fully-expanded whitelist entry should match compressed client",
+		},
+		{
+			name:           "non-ip entry stays exact-string match",
+			clientIP:       "office",
+			expectedStatus: http.StatusOK,
+			description:    "non-IP whitelist entry should still match by raw string",
+		},
+		{
+			name:           "unrelated ipv6 client blocked",
+			clientIP:       "2001:db8::ffff",
+			expectedStatus: 503,
+			description:    "an IPv6 client not in the whitelist should be blocked",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "http://localhost/", nil)
+			req.Header.Set("Cf-Connecting-Ip", tt.clientIP)
+
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, req)
+
+			response := recorder.Result()
+			defer response.Body.Close()
+
+			if response.StatusCode != tt.expectedStatus {
+				t.Errorf("%s: Expected status code %d, got %d", tt.description, tt.expectedStatus, response.StatusCode)
+			}
+		})
+	}
+}
+
 func TestKubernetesEnvironment(t *testing.T) {
 	// Reset shared state between tests
 	plugin.ResetSharedCacheForTesting()

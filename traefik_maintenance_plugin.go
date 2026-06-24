@@ -974,8 +974,8 @@ func (m *MaintenanceCheck) isClientAllowed(req *http.Request, whitelist []string
 		}
 
 		for _, whitelistEntry := range whitelist {
-			// Exact match
-			if whitelistEntry == clientIP {
+			// Exact match (IPv6-canonical via net.ParseIP; non-IP entries compared raw)
+			if ipExactMatch(clientIP, whitelistEntry) {
 				if m.debug {
 					fmt.Fprintf(os.Stdout, "[MaintenanceCheck] IP '%s' matches whitelist entry '%s', allowing request\n", clientIP, whitelistEntry)
 				}
@@ -1201,6 +1201,19 @@ func ResetSharedCacheForTesting() {
 	}{}
 
 	shutdownOnce = sync.Once{}
+}
+
+// ipExactMatch reports whether entry and clientIP denote the same address.
+// Both are parsed with net.ParseIP so any textual IPv6 form (letter case,
+// zero-compression, full expansion) matches; non-IP entries fall back to a
+// raw string compare.
+func ipExactMatch(clientIP, entry string) bool {
+	ce := net.ParseIP(entry)
+	ci := net.ParseIP(clientIP)
+	if ce != nil && ci != nil {
+		return ce.Equal(ci)
+	}
+	return entry == clientIP
 }
 
 // isCIDRMatch checks if an IP is contained within a CIDR range
