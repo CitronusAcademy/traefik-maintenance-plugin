@@ -11,7 +11,7 @@ func (m *MaintenanceCheck) handleCORSPreflightRequest(rw http.ResponseWriter, re
 		return false
 	}
 
-	isActive, whitelist := getMaintenanceStatusForDomain(req.Host)
+	isActive, whitelist := getMaintenanceStatusForDomain(m.extractHostWithoutPort(req.Host))
 	if !isActive {
 		return false
 	}

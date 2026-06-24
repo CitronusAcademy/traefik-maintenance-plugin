@@ -2027,3 +2027,110 @@ func TestConfigurationOverridesBehavior(t *testing.T) {
 		})
 	}
 }
+
+func TestWarmupCachesAllEnvironments(t *testing.T) {
+	plugin.ResetSharedCacheForTesting()
+	defer plugin.ResetSharedCacheForTesting()
+
+	// A maintenance API that holds each connection briefly so the warm-up
+	// goroutines overlap — this is what contends the refresh lock. Under a
+	// single global lock, every goroutine but the one holding it sees the
+	// lock taken, "succeeds" without fetching, and leaves its environment
+	// un-cached (treated inactive → 200). Per-environment locks let every
+	// environment fetch concurrently and reach the cached active (512) state.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(40 * time.Millisecond)
+		_, _ = w.Write([]byte(`{"system_config":{"maintenance":{"is_active":true,"whitelist":[]}}}`))
+	}))
+	defer srv.Close()
+
+	suffixes := []string{".s1", ".s2", ".s3", ".s4", ".s5", ".s6", ".s7", ".s8"}
+
+	cfg := plugin.CreateConfig()
+	cfg.MaintenanceStatusCode = 512
+	cfg.CacheDurationInSeconds = 30
+	cfg.RequestTimeoutInSeconds = 5
+	cfg.EnvironmentEndpoints = map[string]string{}
+	for _, s := range suffixes {
+		cfg.EnvironmentEndpoints[s] = srv.URL
+	}
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	h, err := plugin.New(context.Background(), next, cfg, "test")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	// Every environment must end up blocking (maintenance active) within the
+	// warm-up window — not just the first one loaded synchronously.
+	for _, s := range suffixes {
+		host := "example" + s
+		var status int
+		deadline := time.Now().Add(3 * time.Second)
+		for time.Now().Before(deadline) {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "http://"+host+"/api/data", nil)
+			h.ServeHTTP(rec, req)
+			status = rec.Code
+			if status == 512 {
+				break
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		if status != 512 {
+			t.Fatalf("host %s: expected 512 (maintenance cached), got %d", host, status)
+		}
+	}
+}
+
+func TestCORSPreflightStripsHostPort(t *testing.T) {
+	plugin.ResetSharedCacheForTesting()
+	defer plugin.ResetSharedCacheForTesting()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"system_config":{"maintenance":{"is_active":true,"whitelist":[]}}}`))
+	}))
+	defer srv.Close()
+
+	cfg := plugin.CreateConfig()
+	cfg.MaintenanceStatusCode = 512
+	cfg.CacheDurationInSeconds = 10
+	cfg.RequestTimeoutInSeconds = 5
+	cfg.EnvironmentEndpoints = map[string]string{".world": srv.URL}
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	h, err := plugin.New(context.Background(), next, cfg, "test")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	// wait for warm-up to cache the active state
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://example.world/x", nil))
+		if rec.Code == 512 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	// OPTIONS preflight with a PORT in Host must still resolve the .world env (active) and be handled,
+	// not fall through to next.ServeHTTP.
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodOptions, "http://example.world:443/api", nil)
+	req.Host = "example.world:443"
+	req.Header.Set("Origin", "https://example.world")
+	h.ServeHTTP(rec, req)
+
+	// Preflight must be handled as a preflight (blocked preflight → 200 per CORS
+	// spec), not fall through to the main path and return the 512 maintenance
+	// stub. With the raw (ported) host the .world env doesn't match, maintenance
+	// reads inactive, and the OPTIONS request falls through to the 512 response.
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected preflight to be handled (200) for ported host; got code %d", rec.Code)
+	}
+	if rec.Header().Get("Access-Control-Allow-Origin") != "https://example.world" {
+		t.Fatalf("expected preflight CORS headers for ported host; got headers %v, code %d", rec.Header(), rec.Code)
+	}
+}
