@@ -532,10 +532,6 @@ func getMaintenanceStatusForDomain(domain string) (bool, []string) {
 	return envCache.isActive, whitelistCopy
 }
 
-func getMaintenanceStatus() (bool, []string) {
-	return false, []string{}
-}
-
 // calculateBackoff returns an exponential backoff duration with jitter
 func calculateBackoff(attempts int) time.Duration {
 	if attempts <= 0 {
@@ -760,11 +756,6 @@ func (m *MaintenanceCheck) setCORSPreflightHeaders(rw http.ResponseWriter, origi
 	}
 }
 
-func (m *MaintenanceCheck) isMaintenanceActiveForClient(req *http.Request) bool {
-	isActive, whitelist := getMaintenanceStatusForDomain(req.Host)
-	return isActive && !m.isClientAllowed(req, whitelist)
-}
-
 func (m *MaintenanceCheck) sendBlockedPreflightResponse(rw http.ResponseWriter) {
 	if m.debug {
 		fmt.Fprintf(os.Stdout, "[MaintenanceCheck] CORS preflight completed, but actual request will be blocked due to maintenance mode\n")
@@ -907,16 +898,6 @@ func cleanIPAddress(ip string) string {
 	}
 
 	return ip
-}
-
-// getClientIP returns the first client IP from Cf-Connecting-Ip header
-// This is kept for backward compatibility
-func getClientIP(req *http.Request, debug bool) string {
-	allIPs := getAllClientIPs(req, debug)
-	if len(allIPs) > 0 {
-		return allIPs[0]
-	}
-	return ""
 }
 
 func (m *MaintenanceCheck) isClientAllowed(req *http.Request, whitelist []string) bool {
