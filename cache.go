@@ -319,10 +319,6 @@ func ResetSharedCacheForTesting() {
 	initLock.Lock()
 	defer initLock.Unlock()
 
-	envLocksMu.Lock()
-	envLocks = make(map[string]*sync.Mutex)
-	envLocksMu.Unlock()
-
 	// Signal the refresher to stop. CloseSharedCache may have already closed
 	// stopCh (and cleared initialized); only close it here if it is still open,
 	// to avoid a double close.
@@ -347,6 +343,13 @@ func ResetSharedCacheForTesting() {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+
+	// Clear per-environment locks only now that the refresher has stopped. A
+	// still-running refresher calls envLock() and would otherwise re-populate the
+	// map immediately after we cleared it.
+	envLocksMu.Lock()
+	envLocks = make(map[string]*sync.Mutex)
+	envLocksMu.Unlock()
 
 	sharedCache = sharedCacheState{}
 

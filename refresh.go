@@ -62,6 +62,9 @@ func refreshAllEnvironments() {
 	environmentEndpoints := sharedCache.environmentEndpoints
 	sharedCache.RUnlock()
 
+	// Safe to range after RUnlock today: environmentEndpoints is written once at
+	// init and never mutated. If a second writer is ever added, hold the lock
+	// across this range (or copy the keys under it) to avoid a concurrent-map read.
 	for envSuffix := range environmentEndpoints {
 		refreshMaintenanceStatusForEnvironment(envSuffix)
 	}
