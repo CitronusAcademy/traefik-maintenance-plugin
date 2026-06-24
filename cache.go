@@ -117,18 +117,19 @@ func ensureSharedCacheInitialized(environmentEndpoints map[string]string, enviro
 	warmupStopCh := sharedCache.stopCh
 	sharedCache.RUnlock()
 
-	// The first environment is warmed synchronously so at least one cache entry
-	// exists before New returns; the rest warm in the background. Go randomizes
-	// map iteration, so which environment is warmed first is arbitrary.
-	firstEnv := true
+	// Warm every environment before New returns, so no environment serves traffic
+	// with an unpopulated cache during the startup window. Warm concurrently, then
+	// wait for all. An environment whose API is unreachable still gives up after its
+	// retries (staying fail-open) — that is the intended availability posture.
+	var warmupWG sync.WaitGroup
 	for envSuffix := range environmentEndpoints {
-		if firstEnv {
-			warmupEnvironment(envSuffix, debug, warmupStopCh)
-			firstEnv = false
-		} else {
-			go warmupEnvironment(envSuffix, debug, warmupStopCh)
-		}
+		warmupWG.Add(1)
+		go func(suffix string) {
+			defer warmupWG.Done()
+			warmupEnvironment(suffix, debug, warmupStopCh)
+		}(envSuffix)
 	}
+	warmupWG.Wait()
 
 	startBackgroundRefresher()
 }
