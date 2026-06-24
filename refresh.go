@@ -18,7 +18,10 @@ var (
 )
 
 func startBackgroundRefresher() {
-	if sharedCache.refresherRunning {
+	sharedCache.RLock()
+	running := sharedCache.refresherRunning
+	sharedCache.RUnlock()
+	if running {
 		return
 	}
 

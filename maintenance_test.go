@@ -2276,3 +2276,31 @@ func TestDisallowedOriginNotReflected(t *testing.T) {
 		t.Fatalf("allowed origin not reflected: ACAO=%q", got)
 	}
 }
+
+func TestConcurrentNewIsRaceFree(t *testing.T) {
+	plugin.ResetSharedCacheForTesting()
+	defer plugin.ResetSharedCacheForTesting()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"system_config":{"maintenance":{"is_active":false,"whitelist":[]}}}`))
+	}))
+	defer srv.Close()
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			cfg := plugin.CreateConfig()
+			cfg.CacheDurationInSeconds = 30
+			cfg.RequestTimeoutInSeconds = 5
+			cfg.EnvironmentEndpoints = map[string]string{".world": srv.URL, ".pro": srv.URL}
+			if _, err := plugin.New(context.Background(), next, cfg, "test"); err != nil {
+				t.Errorf("New: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+}

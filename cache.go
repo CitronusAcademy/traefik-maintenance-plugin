@@ -50,7 +50,10 @@ func envLock(suffix string) *sync.Mutex {
 }
 
 func ensureSharedCacheInitialized(environmentEndpoints map[string]string, environmentSecrets map[string]EnvironmentSecret, cacheDuration, requestTimeout time.Duration, debug bool, userAgent string, secretHeader, secretHeaderValue string) {
-	if sharedCache.initialized {
+	sharedCache.RLock()
+	alreadyInit := sharedCache.initialized
+	sharedCache.RUnlock()
+	if alreadyInit {
 		return
 	}
 
@@ -108,6 +111,10 @@ func ensureSharedCacheInitialized(environmentEndpoints map[string]string, enviro
 		fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Performing initial fetch for all environments\n")
 	}
 
+	sharedCache.RLock()
+	warmupStopCh := sharedCache.stopCh
+	sharedCache.RUnlock()
+
 	firstEnv := true
 	for envSuffix := range environmentEndpoints {
 		if firstEnv {
@@ -137,7 +144,7 @@ func ensureSharedCacheInitialized(environmentEndpoints map[string]string, enviro
 						fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Initial fetch failed for environment '%s', retrying in %v\n", env, retryDelay)
 					}
 					select {
-					case <-sharedCache.stopCh:
+					case <-warmupStopCh:
 						return
 					case <-time.After(retryDelay):
 					}
