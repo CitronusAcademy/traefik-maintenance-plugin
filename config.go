@@ -21,6 +21,7 @@ type Config struct {
 	SecretHeaderValue        string                       `json:"secretHeaderValue,omitempty"`
 	AllowedOrigins           []string                     `json:"allowedOrigins,omitempty"`
 	CorsAllowAnyOrigin       bool                         `json:"corsAllowAnyOrigin,omitempty"`
+	TrustedProxies           []string                     `json:"trustedProxies,omitempty"`
 }
 
 type EnvironmentSecret struct {

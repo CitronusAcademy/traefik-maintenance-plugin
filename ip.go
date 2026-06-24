@@ -86,6 +86,29 @@ func cleanIPAddress(ip string) string {
 	return ip
 }
 
+// remoteAddrTrusted reports whether the request's immediate peer is within the
+// configured trustedProxies set. When no proxies are configured it returns true
+// (Cf-Connecting-Ip is trusted unconditionally — the default).
+func (m *MaintenanceCheck) remoteAddrTrusted(req *http.Request) bool {
+	if len(m.trustedProxies) == 0 {
+		return true
+	}
+	host := req.RemoteAddr
+	if h, _, err := net.SplitHostPort(req.RemoteAddr); err == nil {
+		host = h
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	for _, cidr := range m.trustedProxies {
+		if cidr.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *MaintenanceCheck) isClientAllowed(req *http.Request, whitelist []string) bool {
 	// Guard against nil request or whitelist
 	if req == nil {
@@ -115,6 +138,16 @@ func (m *MaintenanceCheck) isClientAllowed(req *http.Request, whitelist []string
 			}
 			return true
 		}
+	}
+
+	// When trustedProxies is configured, only honor Cf-Connecting-Ip if the
+	// request's immediate peer is a trusted hop; otherwise the header is
+	// spoofable and we resolve no client IP (block during maintenance).
+	if !m.remoteAddrTrusted(req) {
+		if m.debug {
+			fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Request peer %s is not a trusted proxy; ignoring Cf-Connecting-Ip\n", req.RemoteAddr)
+		}
+		return false
 	}
 
 	// Get ALL client IPs from all headers

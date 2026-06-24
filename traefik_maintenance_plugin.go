@@ -3,6 +3,7 @@ package traefik_maintenance_plugin
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -19,6 +20,7 @@ type MaintenanceCheck struct {
 	debug                 bool
 	allowedOrigins        []string
 	corsAllowAnyOrigin    bool
+	trustedProxies        []*net.IPNet
 }
 
 func New(_ context.Context, next http.Handler, config *Config, name string) (http.Handler, error) {
@@ -66,6 +68,31 @@ func New(_ context.Context, next http.Handler, config *Config, name string) (htt
 	allowedOriginsCopy := make([]string, len(config.AllowedOrigins))
 	copy(allowedOriginsCopy, config.AllowedOrigins)
 
+	// Parse trustedProxies into CIDRs once. A bare IP becomes a host route
+	// (/32 or /128). When the set is empty, Cf-Connecting-Ip is trusted
+	// unconditionally (today's default behavior).
+	var trustedProxies []*net.IPNet
+	for _, entry := range config.TrustedProxies {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		if !strings.Contains(entry, "/") {
+			if ip := net.ParseIP(entry); ip != nil {
+				bits := 32
+				if ip.To4() == nil {
+					bits = 128
+				}
+				entry = fmt.Sprintf("%s/%d", entry, bits)
+			}
+		}
+		if _, cidr, err := net.ParseCIDR(entry); err == nil {
+			trustedProxies = append(trustedProxies, cidr)
+		} else if config.Debug {
+			fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Warning: ignoring invalid trustedProxies entry %q: %v\n", entry, err)
+		}
+	}
+
 	m := &MaintenanceCheck{
 		next:                  next,
 		skipPrefixes:          skipPrefixesCopy,
@@ -76,6 +103,7 @@ func New(_ context.Context, next http.Handler, config *Config, name string) (htt
 		debug:                 config.Debug,
 		allowedOrigins:        allowedOriginsCopy,
 		corsAllowAnyOrigin:    config.CorsAllowAnyOrigin,
+		trustedProxies:        trustedProxies,
 	}
 
 	return m, nil
