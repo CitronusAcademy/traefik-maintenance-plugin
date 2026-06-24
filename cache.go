@@ -115,46 +115,42 @@ func ensureSharedCacheInitialized(environmentEndpoints map[string]string, enviro
 	warmupStopCh := sharedCache.stopCh
 	sharedCache.RUnlock()
 
+	// The first environment is warmed synchronously so at least one cache entry
+	// exists before New returns; the rest warm in the background. Go randomizes
+	// map iteration, so which environment is warmed first is arbitrary.
 	firstEnv := true
 	for envSuffix := range environmentEndpoints {
 		if firstEnv {
-			// Первую среду загружаем синхронно
-			var retryDelay time.Duration = 100 * time.Millisecond
-			for i := 0; i < 5; i++ {
-				if refreshMaintenanceStatusForEnvironment(envSuffix) {
-					break
-				}
-
-				if debug {
-					fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Initial fetch failed for environment '%s', retrying in %v\n", envSuffix, retryDelay)
-				}
-				time.Sleep(retryDelay)
-				retryDelay *= 2
-			}
+			warmupEnvironment(envSuffix, debug, warmupStopCh)
 			firstEnv = false
 		} else {
-			go func(env string) {
-				var retryDelay time.Duration = 100 * time.Millisecond
-				for i := 0; i < 5; i++ {
-					if refreshMaintenanceStatusForEnvironment(env) {
-						break
-					}
-
-					if debug {
-						fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Initial fetch failed for environment '%s', retrying in %v\n", env, retryDelay)
-					}
-					select {
-					case <-warmupStopCh:
-						return
-					case <-time.After(retryDelay):
-					}
-					retryDelay *= 2
-				}
-			}(envSuffix)
+			go warmupEnvironment(envSuffix, debug, warmupStopCh)
 		}
 	}
 
 	startBackgroundRefresher()
+}
+
+// warmupEnvironment retries the initial fetch for one environment with
+// exponential backoff (100ms, 200ms, ... up to 5 attempts). The wait between
+// attempts selects on stopCh, so a shutdown during warmup returns promptly
+// instead of blocking in time.Sleep.
+func warmupEnvironment(envSuffix string, debug bool, stopCh <-chan struct{}) {
+	retryDelay := 100 * time.Millisecond
+	for i := 0; i < 5; i++ {
+		if refreshMaintenanceStatusForEnvironment(envSuffix) {
+			return
+		}
+		if debug {
+			fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Initial fetch failed for environment '%s', retrying in %v\n", envSuffix, retryDelay)
+		}
+		select {
+		case <-stopCh:
+			return
+		case <-time.After(retryDelay):
+		}
+		retryDelay *= 2
+	}
 }
 
 func updateEnvironmentCache(envSuffix string, result *MaintenanceResponse, duration time.Duration, failedAttempts int, success bool) {
