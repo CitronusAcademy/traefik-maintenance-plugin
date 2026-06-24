@@ -187,6 +187,21 @@ func refreshMaintenanceStatusForEnvironment(envSuffix string) bool {
 		return false
 	}
 
+	// A 200 whose body lacks system_config/maintenance (e.g. {}, an error
+	// envelope, or an intermediary's status page) decodes to the zero value,
+	// which is indistinguishable from "maintenance off" with value fields.
+	// Treat an absent maintenance object as a failed fetch so prior state is
+	// kept and the fetch is retried, rather than silently switching off.
+	if result.SystemConfig == nil || result.SystemConfig.Maintenance == nil {
+		if debug {
+			fmt.Fprintf(os.Stdout, "[MaintenanceCheck] 200 response for environment '%s' carried no maintenance state; treating as a failed fetch\n", envSuffix)
+		}
+
+		backoffTime := calculateBackoff(currentFailedAttempts)
+		updateEnvironmentCache(envSuffix, nil, backoffTime, currentFailedAttempts+1, false)
+		return false
+	}
+
 	updateEnvironmentCache(envSuffix, &result, cacheDuration, 0, true)
 
 	if debug {

@@ -61,8 +61,8 @@ func CreateConfig() *Config {
 }
 
 type MaintenanceResponse struct {
-	SystemConfig struct {
-		Maintenance struct {
+	SystemConfig *struct {
+		Maintenance *struct {
 			IsActive  bool     `json:"is_active"`
 			Whitelist []string `json:"whitelist"`
 		} `json:"maintenance"`
