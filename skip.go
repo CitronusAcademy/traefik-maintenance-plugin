@@ -2,6 +2,7 @@ package traefik_maintenance_plugin
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -21,12 +22,26 @@ func (m *MaintenanceCheck) logRequestHeadersForDebugging(req *http.Request) {
 }
 
 func (m *MaintenanceCheck) extractHostWithoutPort(originalHost string) string {
+	if originalHost == "" {
+		return ""
+	}
+
 	host := originalHost
-	if colonIndex := strings.IndexByte(host, ':'); colonIndex > 0 {
-		host = host[:colonIndex]
-		if m.debug {
-			fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Normalized host from '%s' to '%s'\n", originalHost, host)
+	if h, _, err := net.SplitHostPort(originalHost); err == nil {
+		// "host:port", "[v6]:port" → bare host / bare v6
+		host = h
+	} else if strings.HasPrefix(host, "[") {
+		// "[v6]" with no port → strip brackets
+		if end := strings.Index(host, "]"); end != -1 {
+			host = host[1:end]
 		}
+	}
+	// Otherwise (bare hostname with no port, or bare IPv6 with no brackets)
+	// SplitHostPort errors and we keep the original — splitting on ':' here
+	// would corrupt a bare IPv6 address.
+
+	if m.debug && host != originalHost {
+		fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Normalized host from '%s' to '%s'\n", originalHost, host)
 	}
 	return host
 }
