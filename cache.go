@@ -75,41 +75,7 @@ func ensureSharedCacheInitialized(environmentEndpoints map[string]string, enviro
 		requestTimeout = 5 * time.Second
 	}
 
-	var wg sync.WaitGroup
-	if sharedCache.initialized && sharedCache.refresherRunning && sharedCache.stopCh != nil {
-		wg.Add(1)
-		oldStopCh := sharedCache.stopCh
-
-		sharedCache.stopCh = make(chan struct{})
-
-		sharedCache.Lock()
-		shutdownInProgress := true
-		sharedCache.Unlock()
-
-		close(oldStopCh)
-
-		go func() {
-			shutdownTimer := time.NewTimer(500 * time.Millisecond)
-			defer shutdownTimer.Stop()
-
-			<-shutdownTimer.C
-
-			sharedCache.Lock()
-			if shutdownInProgress && sharedCache.refresherRunning {
-				if debug {
-					fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Refresher didn't shut down in time, forcing cleanup\n")
-				}
-				sharedCache.refresherRunning = false
-			}
-			sharedCache.Unlock()
-
-			wg.Done()
-		}()
-
-		wg.Wait()
-	} else {
-		sharedCache.stopCh = make(chan struct{})
-	}
+	sharedCache.stopCh = make(chan struct{})
 
 	transport := &http.Transport{
 		MaxIdleConnsPerHost: 10,
