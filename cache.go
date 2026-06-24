@@ -253,21 +253,31 @@ func CloseSharedCache() {
 		initLock.Lock()
 		defer initLock.Unlock()
 
-		if sharedCache.initialized && sharedCache.stopCh != nil {
-			if sharedCache.debug {
+		sharedCache.RLock()
+		initialized := sharedCache.initialized
+		stopCh := sharedCache.stopCh
+		debug := sharedCache.debug
+		sharedCache.RUnlock()
+
+		if initialized && stopCh != nil {
+			if debug {
 				fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Beginning shared cache cleanup\n")
 			}
 
-			close(sharedCache.stopCh)
+			close(stopCh)
 
 			// Wait a bit for goroutines to terminate
 			time.Sleep(200 * time.Millisecond)
 
-			// Clear client to release connections
+			// Clear client/initialized under the cache lock — ServeHTTP and the
+			// refresher read these fields under the RWMutex, so writing them under
+			// initLock alone is a data race.
+			sharedCache.Lock()
 			sharedCache.client = nil
 			sharedCache.initialized = false
+			sharedCache.Unlock()
 
-			if sharedCache.debug {
+			if debug {
 				fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Shared cache resources cleaned up\n")
 			}
 		}
