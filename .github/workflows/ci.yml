@@ -53,3 +53,14 @@ jobs:
       - name: Yaegi test
         working-directory: go/src/github.com/${{ github.repository }}
         run: "$(go env GOPATH)/bin/yaegi test -v ."
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.12.2
