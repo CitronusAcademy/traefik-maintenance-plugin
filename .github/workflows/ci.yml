@@ -16,7 +16,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -50,7 +50,7 @@ jobs:
       GOPATH: ${{ github.workspace }}/go
       YAEGI_VERSION: v0.16.1
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           path: go/src/github.com/${{ github.repository }}
       - uses: actions/setup-go@v5
@@ -70,7 +70,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -81,7 +81,7 @@ jobs:
   vulncheck:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: govulncheck
         uses: golang/govulncheck-action@v1
         with:
