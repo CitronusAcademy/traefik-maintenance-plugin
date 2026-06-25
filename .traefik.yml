@@ -4,23 +4,38 @@ type: middleware
 
 import: github.com/CitronusAcademy/traefik-maintenance-plugin
 
-summary: "A middleware that checks if a service is in maintenance mode and returns an appropriate status code"
+summary: "Puts a service into maintenance mode. Polls an HTTP API in the background for status and an IP whitelist, blocks traffic while maintenance is active, and exempts whitelisted clients, hosts and paths."
 
 iconPath: .assets/icon.png
 
 testData:
   environmentEndpoints:
-    "": "http://maintenance-service/v1/configurations/"
+    "": "https://maintenance-api.example.com/v1/configurations/"
+  environmentSecrets:
+    "":
+      header: "X-Plugin-Secret"
+      value: "example-secret-token"
   cacheDurationInSeconds: 10
   requestTimeoutInSeconds: 5
   maintenanceStatusCode: 512
   skipPrefixes:
     - "/admin"
   skipHosts:
-    - admin.example.com
-    - monitoring.example.com
+    - "admin.example.com"
     - "*.internal.example.com"
-  secretHeader: "X-Plugin-Secret"
-  secretHeaderValue: "example-secret-token"
+  allowHTMLWhenMaintenance: true
+  allowStaticExtensions:
+    - ".js"
+    - ".css"
+    - ".svg"
+    - ".ico"
+    - ".png"
+  allowedOrigins:
+    - "https://app.example.com"
+  corsAllowAnyOrigin: false
+  trustedProxies:
+    - "173.245.48.0/20"
+  strictAssetMatching: true
+  debug: false
 
 id: maintenanceCheck
