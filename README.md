@@ -1,8 +1,9 @@
 # Traefik Maintenance Plugin
 
-[![Go](https://img.shields.io/badge/Go-1.22-00ADD8?logo=go&logoColor=white)](https://go.dev/)
-[![Coverage](https://img.shields.io/badge/coverage-75.8%25-brightgreen)](#development)
+[![CI](https://github.com/CitronusAcademy/traefik-maintenance-plugin/actions/workflows/ci.yml/badge.svg)](https://github.com/CitronusAcademy/traefik-maintenance-plugin/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/CitronusAcademy/traefik-maintenance-plugin/branch/main/graph/badge.svg)](https://codecov.io/gh/CitronusAcademy/traefik-maintenance-plugin)
 [![Go Report Card](https://goreportcard.com/badge/github.com/CitronusAcademy/traefik-maintenance-plugin)](https://goreportcard.com/report/github.com/CitronusAcademy/traefik-maintenance-plugin)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/CitronusAcademy/traefik-maintenance-plugin)](go.mod)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 A Traefik middleware plugin that puts a service into maintenance mode. It polls a
@@ -175,6 +176,9 @@ that header before it reaches Traefik.
 | `allowHTMLWhenMaintenance` | `true` | Allow GET/HEAD requests that accept `text/html` (lets a status page load while APIs stay blocked). |
 | `allowStaticExtensions` | common web asset extensions | File extensions allowed for GET/HEAD during maintenance. |
 | `allowedOrigins` | `[]` | CORS origin allow-list. Empty reflects any `Origin`; non-empty reflects only listed origins. |
+| `corsAllowAnyOrigin` | `true` | When `allowedOrigins` is empty, reflect any `Origin` (default). Set `false` to send no CORS `Access-Control-Allow-Origin` unless the request's `Origin` matches `allowedOrigins`. |
+| `trustedProxies` | `[]` | CIDR ranges for trusted immediate peers. When set, `Cf-Connecting-Ip` is only honored if the request's direct peer (`RemoteAddr`) falls in one of these ranges; otherwise no client IP is resolved (blocked during maintenance). Empty = trust the header unconditionally. |
+| `strictAssetMatching` | `false` | When `true`, match `allowStaticExtensions` against the URL's real file extension (`path.Ext`), so paths like `/data.json/x` are not treated as static assets. |
 | `secretHeader` / `secretHeaderValue` | `X-Plugin-Secret` / `""` | Fallback secret header used when an environment has no per-environment secret. |
 | `debug` | `false` | Verbose stdout logging. See the warning in Operational notes. |
 
@@ -212,7 +216,7 @@ These are the non-obvious behaviors worth knowing before relying on the plugin.
 go build ./...
 go test ./...
 go test -race ./...        # race detector
-go test -cover ./...       # ~75.8% statement coverage
+go test -cover ./...       # statement coverage (also reported to Codecov in CI)
 go vet ./...
 gofmt -l .
 ```
