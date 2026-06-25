@@ -1,4 +1,8 @@
-# Traefik Maintenance Plugin
+<p align="center">
+  <img src=".assets/icon.svg" alt="Traefik Maintenance Plugin" title="m8ce" width="128" height="128">
+</p>
+
+<h1 align="center">Traefik Maintenance Plugin</h1>
 
 <p align="center">
   <a href="https://github.com/CitronusAcademy/traefik-maintenance-plugin/actions/workflows/ci.yml"><img src="https://github.com/CitronusAcademy/traefik-maintenance-plugin/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
