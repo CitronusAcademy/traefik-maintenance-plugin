@@ -139,7 +139,7 @@ spec:
       skipHosts:
         - "admin.example.com"
         - "*.internal.example.com"
-      allowHTMLWhenMaintenance: false
+      allowHTMLWhenMaintenance: false   # default: true; set false to block HTML pages too
       allowStaticExtensions:
         - ".js"
         - ".css"
