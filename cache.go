@@ -6,6 +6,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/CitronusAcademy/traefik-maintenance-plugin/internal/logx"
 )
 
 // sharedCacheState holds maintenance status for multiple environments.
@@ -67,14 +69,14 @@ func ensureSharedCacheInitialized(environmentEndpoints map[string]string, enviro
 
 	if cacheDuration <= 0 {
 		if debug {
-			fmt.Fprintf(logOut, "[MaintenanceCheck] Warning: invalid cache duration %v, using default of 10s\n", cacheDuration)
+			fmt.Fprintf(logx.Out, "[MaintenanceCheck] Warning: invalid cache duration %v, using default of 10s\n", cacheDuration)
 		}
 		cacheDuration = 10 * time.Second
 	}
 
 	if requestTimeout <= 0 {
 		if debug {
-			fmt.Fprintf(logOut, "[MaintenanceCheck] Warning: invalid request timeout %v, using default of 5s\n", requestTimeout)
+			fmt.Fprintf(logx.Out, "[MaintenanceCheck] Warning: invalid request timeout %v, using default of 5s\n", requestTimeout)
 		}
 		requestTimeout = 5 * time.Second
 	}
@@ -129,7 +131,7 @@ func warnMissingSecrets(environmentEndpoints map[string]string, environmentSecre
 			if label == "" {
 				label = "(default)"
 			}
-			fmt.Fprintf(logOut, "[MaintenanceCheck] Warning: environment '%s' has no secret configured; a secret-gated API will return no whitelist and block all clients during maintenance\n", label)
+			fmt.Fprintf(logx.Out, "[MaintenanceCheck] Warning: environment '%s' has no secret configured; a secret-gated API will return no whitelist and block all clients during maintenance\n", label)
 		}
 	}
 }
@@ -141,7 +143,7 @@ func warnMissingSecrets(environmentEndpoints map[string]string, environmentSecre
 // its retries (staying fail-open) — that is the intended availability posture.
 func warmupAllEnvironments(environmentEndpoints map[string]string, debug bool) {
 	if debug {
-		fmt.Fprintf(logOut, "[MaintenanceCheck] Performing initial fetch for all environments\n")
+		fmt.Fprintf(logx.Out, "[MaintenanceCheck] Performing initial fetch for all environments\n")
 	}
 
 	sharedCache.RLock()
@@ -170,7 +172,7 @@ func warmupEnvironment(envSuffix string, debug bool, stopCh <-chan struct{}) {
 			return
 		}
 		if debug {
-			fmt.Fprintf(logOut, "[MaintenanceCheck] Initial fetch failed for environment '%s', retrying in %v\n", envSuffix, retryDelay)
+			fmt.Fprintf(logx.Out, "[MaintenanceCheck] Initial fetch failed for environment '%s', retrying in %v\n", envSuffix, retryDelay)
 		}
 		select {
 		case <-stopCh:
@@ -255,7 +257,7 @@ func getMaintenanceStatusForDomain(domain string) (bool, []string) {
 	}
 
 	if sharedCache.debug {
-		fmt.Fprintf(logOut, "[MaintenanceCheck] Using cached status for environment '%s' (domain: %s): active=%v, whitelist count=%d\n",
+		fmt.Fprintf(logx.Out, "[MaintenanceCheck] Using cached status for environment '%s' (domain: %s): active=%v, whitelist count=%d\n",
 			envSuffix, domain, envCache.isActive, len(envCache.whitelist))
 	}
 
@@ -300,7 +302,7 @@ func CloseSharedCache() {
 
 		if initialized && stopCh != nil {
 			if debug {
-				fmt.Fprintf(logOut, "[MaintenanceCheck] Beginning shared cache cleanup\n")
+				fmt.Fprintf(logx.Out, "[MaintenanceCheck] Beginning shared cache cleanup\n")
 			}
 
 			close(stopCh)
@@ -317,7 +319,7 @@ func CloseSharedCache() {
 			sharedCache.Unlock()
 
 			if debug {
-				fmt.Fprintf(logOut, "[MaintenanceCheck] Shared cache resources cleaned up\n")
+				fmt.Fprintf(logx.Out, "[MaintenanceCheck] Shared cache resources cleaned up\n")
 			}
 		}
 	})

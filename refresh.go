@@ -8,6 +8,8 @@ import (
 	"math/rand"
 	"net/http"
 	"time"
+
+	"github.com/CitronusAcademy/traefik-maintenance-plugin/internal/logx"
 )
 
 func startBackgroundRefresher() {
@@ -31,7 +33,7 @@ func startBackgroundRefresher() {
 	sharedCache.Unlock()
 
 	if debug {
-		fmt.Fprintf(logOut, "[MaintenanceCheck] Started shared background refresher with interval of %v\n", cacheDuration)
+		fmt.Fprintf(logx.Out, "[MaintenanceCheck] Started shared background refresher with interval of %v\n", cacheDuration)
 	}
 
 	go func() {
@@ -44,7 +46,7 @@ func startBackgroundRefresher() {
 				refreshAllEnvironments()
 			case <-stopCh:
 				if debug {
-					fmt.Fprintf(logOut, "[MaintenanceCheck] Shared background refresher stopped\n")
+					fmt.Fprintf(logx.Out, "[MaintenanceCheck] Shared background refresher stopped\n")
 				}
 
 				sharedCache.Lock()
@@ -103,7 +105,7 @@ func refreshMaintenanceStatusForEnvironment(envSuffix string) bool {
 
 	if !needsRefresh {
 		if debug {
-			fmt.Fprintf(logOut, "[MaintenanceCheck] Environment '%s' cache is still valid, skipping refresh\n", envSuffix)
+			fmt.Fprintf(logx.Out, "[MaintenanceCheck] Environment '%s' cache is still valid, skipping refresh\n", envSuffix)
 		}
 		return true
 	}
@@ -111,14 +113,14 @@ func refreshMaintenanceStatusForEnvironment(envSuffix string) bool {
 	endpoint := getEndpointForDomain(envSuffix)
 
 	if debug {
-		fmt.Fprintf(logOut, "[MaintenanceCheck] Fetching maintenance status from '%s' for environment '%s'\n", endpoint, envSuffix)
+		fmt.Fprintf(logx.Out, "[MaintenanceCheck] Fetching maintenance status from '%s' for environment '%s'\n", endpoint, envSuffix)
 	}
 
 	// A nil client (cache torn down by CloseSharedCache) is not a fetch failure:
 	// skip without applying backoff or touching the cached state.
 	if client == nil {
 		if debug {
-			fmt.Fprintf(logOut, "[MaintenanceCheck] HTTP client is nil, skipping refresh\n")
+			fmt.Fprintf(logx.Out, "[MaintenanceCheck] HTTP client is nil, skipping refresh\n")
 		}
 		return false
 	}
@@ -133,7 +135,7 @@ func refreshMaintenanceStatusForEnvironment(envSuffix string) bool {
 	updateEnvironmentCache(envSuffix, result, cacheDuration, 0, true)
 
 	if debug {
-		fmt.Fprintf(logOut, "[MaintenanceCheck] Successfully updated maintenance status for environment '%s': active=%v, whitelist count=%d\n",
+		fmt.Fprintf(logx.Out, "[MaintenanceCheck] Successfully updated maintenance status for environment '%s': active=%v, whitelist count=%d\n",
 			envSuffix, result.SystemConfig.Maintenance.IsActive, len(result.SystemConfig.Maintenance.Whitelist))
 	}
 
@@ -153,7 +155,7 @@ func fetchMaintenanceState(client *http.Client, endpoint, userAgent, secretHeade
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		if debug {
-			fmt.Fprintf(logOut, "[MaintenanceCheck] Error creating request: %v\n", err)
+			fmt.Fprintf(logx.Out, "[MaintenanceCheck] Error creating request: %v\n", err)
 		}
 		return nil, false
 	}
@@ -163,14 +165,14 @@ func fetchMaintenanceState(client *http.Client, endpoint, userAgent, secretHeade
 	if secretHeader != "" && secretHeaderValue != "" {
 		req.Header.Set(secretHeader, secretHeaderValue)
 		if debug {
-			fmt.Fprintf(logOut, "[MaintenanceCheck] Added secret header '%s' for environment '%s'\n", secretHeader, envSuffix)
+			fmt.Fprintf(logx.Out, "[MaintenanceCheck] Added secret header '%s' for environment '%s'\n", secretHeader, envSuffix)
 		}
 	}
 
 	resp, err := client.Do(req)
 	if err != nil {
 		if debug {
-			fmt.Fprintf(logOut, "[MaintenanceCheck] Error making request: %v\n", err)
+			fmt.Fprintf(logx.Out, "[MaintenanceCheck] Error making request: %v\n", err)
 		}
 		return nil, false
 	}
@@ -180,13 +182,13 @@ func fetchMaintenanceState(client *http.Client, endpoint, userAgent, secretHeade
 	defer func() {
 		_, _ = io.Copy(io.Discard, resp.Body)
 		if cerr := resp.Body.Close(); cerr != nil && debug {
-			fmt.Fprintf(logOut, "[MaintenanceCheck] Error closing response body: %v\n", cerr)
+			fmt.Fprintf(logx.Out, "[MaintenanceCheck] Error closing response body: %v\n", cerr)
 		}
 	}()
 
 	if resp.StatusCode != http.StatusOK {
 		if debug {
-			fmt.Fprintf(logOut, "[MaintenanceCheck] API returned status code: %d\n", resp.StatusCode)
+			fmt.Fprintf(logx.Out, "[MaintenanceCheck] API returned status code: %d\n", resp.StatusCode)
 		}
 		return nil, false
 	}
@@ -198,7 +200,7 @@ func fetchMaintenanceState(client *http.Client, endpoint, userAgent, secretHeade
 	decoder := json.NewDecoder(limitedReader)
 	if err := decoder.Decode(&result); err != nil {
 		if debug {
-			fmt.Fprintf(logOut, "[MaintenanceCheck] Error parsing JSON: %v\n", err)
+			fmt.Fprintf(logx.Out, "[MaintenanceCheck] Error parsing JSON: %v\n", err)
 		}
 		return nil, false
 	}
@@ -210,7 +212,7 @@ func fetchMaintenanceState(client *http.Client, endpoint, userAgent, secretHeade
 	// kept and the fetch is retried, rather than silently switching off.
 	if result.SystemConfig == nil || result.SystemConfig.Maintenance == nil {
 		if debug {
-			fmt.Fprintf(logOut, "[MaintenanceCheck] 200 response for environment '%s' carried no maintenance state; treating as a failed fetch\n", envSuffix)
+			fmt.Fprintf(logx.Out, "[MaintenanceCheck] 200 response for environment '%s' carried no maintenance state; treating as a failed fetch\n", envSuffix)
 		}
 		return nil, false
 	}

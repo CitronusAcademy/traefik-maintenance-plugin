@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"path"
 	"strings"
+
+	"github.com/CitronusAcademy/traefik-maintenance-plugin/internal/logx"
 )
 
 func (m *MaintenanceCheck) logRequestHeadersForDebugging(req *http.Request) {
@@ -13,12 +15,12 @@ func (m *MaintenanceCheck) logRequestHeadersForDebugging(req *http.Request) {
 		return
 	}
 
-	fmt.Fprintf(logOut, "[MaintenanceCheck] Request headers for diagnostics:\n")
+	fmt.Fprintf(logx.Out, "[MaintenanceCheck] Request headers for diagnostics:\n")
 	for headerName, headerValues := range req.Header {
-		fmt.Fprintf(logOut, "[MaintenanceCheck]   %s: %s\n", headerName, strings.Join(headerValues, ", "))
+		fmt.Fprintf(logx.Out, "[MaintenanceCheck]   %s: %s\n", headerName, strings.Join(headerValues, ", "))
 	}
 
-	fmt.Fprintf(logOut, "[MaintenanceCheck] Using only Cf-Connecting-Ip header for IP detection (supports single value or CSV)\n")
+	fmt.Fprintf(logx.Out, "[MaintenanceCheck] Using only Cf-Connecting-Ip header for IP detection (supports single value or CSV)\n")
 }
 
 func (m *MaintenanceCheck) extractHostWithoutPort(originalHost string) string {
@@ -41,7 +43,7 @@ func (m *MaintenanceCheck) extractHostWithoutPort(originalHost string) string {
 	// would corrupt a bare IPv6 address.
 
 	if m.debug && host != originalHost {
-		fmt.Fprintf(logOut, "[MaintenanceCheck] Normalized host from '%s' to '%s'\n", originalHost, host)
+		fmt.Fprintf(logx.Out, "[MaintenanceCheck] Normalized host from '%s' to '%s'\n", originalHost, host)
 	}
 	return host
 }
@@ -128,7 +130,7 @@ func (m *MaintenanceCheck) isHostSkipped(host string) bool {
 	}
 
 	if m.debug {
-		fmt.Fprintf(logOut, "[MaintenanceCheck] Checking host '%s' against skipHosts: %v\n", host, m.skipHosts)
+		fmt.Fprintf(logx.Out, "[MaintenanceCheck] Checking host '%s' against skipHosts: %v\n", host, m.skipHosts)
 	}
 
 	for _, skipHost := range m.skipHosts {
@@ -142,13 +144,13 @@ func (m *MaintenanceCheck) isHostSkipped(host string) bool {
 			suffix := skipHost[1:] // ".example.com"
 			if strings.HasSuffix(host, suffix) {
 				if m.debug {
-					fmt.Fprintf(logOut, "[MaintenanceCheck] Host '%s' matches wildcard pattern '%s'\n", host, skipHost)
+					fmt.Fprintf(logx.Out, "[MaintenanceCheck] Host '%s' matches wildcard pattern '%s'\n", host, skipHost)
 				}
 				return true
 			}
 		} else if skipHost == host {
 			if m.debug {
-				fmt.Fprintf(logOut, "[MaintenanceCheck] Host '%s' matches exact host '%s'\n", host, skipHost)
+				fmt.Fprintf(logx.Out, "[MaintenanceCheck] Host '%s' matches exact host '%s'\n", host, skipHost)
 			}
 			return true
 		}
@@ -164,7 +166,7 @@ func (m *MaintenanceCheck) isPrefixSkipped(path string) bool {
 	}
 
 	if m.debug {
-		fmt.Fprintf(logOut, "[MaintenanceCheck] Checking path '%s' against skipPrefixes: %v\n", path, m.skipPrefixes)
+		fmt.Fprintf(logx.Out, "[MaintenanceCheck] Checking path '%s' against skipPrefixes: %v\n", path, m.skipPrefixes)
 	}
 
 	for _, prefix := range m.skipPrefixes {
@@ -175,7 +177,7 @@ func (m *MaintenanceCheck) isPrefixSkipped(path string) bool {
 
 		if strings.HasPrefix(path, prefix) {
 			if m.debug {
-				fmt.Fprintf(logOut, "[MaintenanceCheck] Path '%s' matches prefix '%s'\n", path, prefix)
+				fmt.Fprintf(logx.Out, "[MaintenanceCheck] Path '%s' matches prefix '%s'\n", path, prefix)
 			}
 			return true
 		}

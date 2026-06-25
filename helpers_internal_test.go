@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"net/http"
 	"testing"
+
+	"github.com/CitronusAcademy/traefik-maintenance-plugin/internal/logx"
 )
 
 // nopHandler is a no-op downstream handler for constructing the middleware in
@@ -16,14 +18,14 @@ func nopHandler() http.Handler {
 
 // captureStdout redirects the package log writer for the duration of fn and
 // returns whatever fn wrote there. Test-only; mutates the package-global
-// logOut, so callers must not run in parallel. Swapping logOut (not os.Stdout)
+// logx.Out, so callers must not run in parallel. Swapping logx.Out (not os.Stdout)
 // keeps this runnable under Yaegi.
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
-	orig := logOut
+	orig := logx.Out
 	var buf bytes.Buffer
-	logOut = &buf
-	defer func() { logOut = orig }()
+	logx.Out = &buf
+	defer func() { logx.Out = orig }()
 	fn()
 	return buf.String()
 }

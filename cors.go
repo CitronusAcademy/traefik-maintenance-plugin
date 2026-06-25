@@ -3,6 +3,8 @@ package traefik_maintenance_plugin
 import (
 	"fmt"
 	"net/http"
+
+	"github.com/CitronusAcademy/traefik-maintenance-plugin/internal/logx"
 )
 
 func (m *MaintenanceCheck) handleCORSPreflightRequest(rw http.ResponseWriter, req *http.Request, normalizedHost string) bool {
@@ -51,7 +53,7 @@ func (m *MaintenanceCheck) writeCORSHeaders(rw http.ResponseWriter, origin strin
 	rw.Header().Set("Access-Control-Max-Age", "86400")
 
 	if m.debug {
-		fmt.Fprintf(logOut, "[MaintenanceCheck] Wrote CORS headers for origin: %s\n", origin)
+		fmt.Fprintf(logx.Out, "[MaintenanceCheck] Wrote CORS headers for origin: %s\n", origin)
 	}
 }
 
@@ -61,7 +63,7 @@ func (m *MaintenanceCheck) setCORSPreflightHeaders(rw http.ResponseWriter, origi
 
 func (m *MaintenanceCheck) sendBlockedPreflightResponse(rw http.ResponseWriter) {
 	if m.debug {
-		fmt.Fprintf(logOut, "[MaintenanceCheck] CORS preflight completed, but actual request will be blocked due to maintenance mode\n")
+		fmt.Fprintf(logx.Out, "[MaintenanceCheck] CORS preflight completed, but actual request will be blocked due to maintenance mode\n")
 	}
 
 	// Preflight must always return 2xx status according to CORS spec
@@ -74,7 +76,7 @@ func (m *MaintenanceCheck) sendSuccessfulPreflightResponse(rw http.ResponseWrite
 
 func (m *MaintenanceCheck) sendMaintenanceResponseWithCORS(rw http.ResponseWriter, req *http.Request) {
 	if m.debug {
-		fmt.Fprintf(logOut, "[MaintenanceCheck] Access denied, returning status code %d\n", m.maintenanceStatusCode)
+		fmt.Fprintf(logx.Out, "[MaintenanceCheck] Access denied, returning status code %d\n", m.maintenanceStatusCode)
 	}
 
 	m.addCORSHeadersToMaintenanceResponse(rw, req)
