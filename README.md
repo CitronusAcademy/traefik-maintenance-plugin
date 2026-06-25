@@ -1,15 +1,66 @@
 # Traefik Maintenance Plugin
 
-[![CI](https://github.com/CitronusAcademy/traefik-maintenance-plugin/actions/workflows/ci.yml/badge.svg)](https://github.com/CitronusAcademy/traefik-maintenance-plugin/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/CitronusAcademy/traefik-maintenance-plugin/branch/main/graph/badge.svg)](https://codecov.io/gh/CitronusAcademy/traefik-maintenance-plugin)
-[![Go Report Card](https://goreportcard.com/badge/github.com/CitronusAcademy/traefik-maintenance-plugin)](https://goreportcard.com/report/github.com/CitronusAcademy/traefik-maintenance-plugin)
-[![Go Version](https://img.shields.io/github/go-mod/go-version/CitronusAcademy/traefik-maintenance-plugin)](go.mod)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+<p align="center">
+  <a href="https://github.com/CitronusAcademy/traefik-maintenance-plugin/actions/workflows/ci.yml"><img src="https://github.com/CitronusAcademy/traefik-maintenance-plugin/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://codecov.io/gh/CitronusAcademy/traefik-maintenance-plugin"><img src="https://codecov.io/gh/CitronusAcademy/traefik-maintenance-plugin/branch/main/graph/badge.svg" alt="codecov"></a>
+  <a href="go.mod"><img src="https://img.shields.io/github/go-mod/go-version/CitronusAcademy/traefik-maintenance-plugin" alt="Go Version"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
+</p>
 
 A Traefik middleware plugin that puts a service into maintenance mode. It polls a
 configurable HTTP API in the background for maintenance status and an IP whitelist, and
 blocks requests while maintenance is active — except for whitelisted clients and any paths
 or hosts you choose to exempt.
+
+## Table of contents
+
+- [Quick start](#quick-start)
+- [How it works](#how-it-works)
+- [Features](#features)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [API contract](#api-contract)
+- [Client IP detection](#client-ip-detection)
+- [Parameters](#parameters)
+- [Operational notes](#operational-notes)
+- [Development](#development)
+
+## Quick start
+
+**1. Register the plugin** in Traefik's static configuration:
+
+```yaml
+experimental:
+  plugins:
+    maintenanceCheck:
+      moduleName: github.com/CitronusAcademy/traefik-maintenance-plugin
+      version: "v1.0.0"
+```
+
+**2. Attach the middleware** to your router (Kubernetes CRD shown):
+
+```yaml
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: maintenance-check
+spec:
+  plugin:
+    maintenanceCheck:
+      environmentEndpoints:
+        "": "https://maintenance-api.example.com/v1/configurations/"
+```
+
+**3. Serve maintenance state** from that endpoint as JSON:
+
+```json
+{ "system_config": { "maintenance": { "is_active": false, "whitelist": [] } } }
+```
+
+With `is_active: false` every request flows through untouched. Flip it to `true`
+and each request receives the maintenance response — except whitelisted IPs and any
+paths or hosts you exempt. See [Configuration](#configuration) for the full option set
+and [Operational notes](#operational-notes) before relying on it in production.
 
 ## How it works
 
