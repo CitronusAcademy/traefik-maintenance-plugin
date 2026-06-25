@@ -1,4 +1,8 @@
-package traefik_maintenance_plugin
+// Package maintenance keeps a background-refreshed cache of per-environment
+// maintenance status. The maintenance API is never called on the request path:
+// a single background goroutine polls each configured environment and writes to
+// a process-global cache that requests only read.
+package maintenance
 
 import (
 	"fmt"
@@ -10,12 +14,43 @@ import (
 	"github.com/CitronusAcademy/traefik-maintenance-plugin/internal/logx"
 )
 
+// DefaultEndpoint is the maintenance-API URL used as a last-resort fallback when
+// no environment endpoint is configured for a domain.
+const DefaultEndpoint = "http://maintenance-service/v1/configurations/"
+
+// Secret carries the header name and value used to authenticate to a
+// maintenance API. A secret-gated API returns the whitelist only when the value
+// matches its stored token.
+type Secret struct {
+	Header string
+	Value  string
+}
+
+// maintenanceResponse is the decoded maintenance-API payload. The JSON field
+// names are a fixed contract with the maintenance service.
+type maintenanceResponse struct {
+	SystemConfig *struct {
+		Maintenance *struct {
+			IsActive  bool     `json:"is_active"`
+			Whitelist []string `json:"whitelist"`
+		} `json:"maintenance"`
+	} `json:"system_config"`
+}
+
+// environmentCache is the cached maintenance state for a single environment.
+type environmentCache struct {
+	isActive       bool
+	whitelist      []string
+	expiry         time.Time
+	failedAttempts int
+}
+
 // sharedCacheState holds maintenance status for multiple environments.
 type sharedCacheState struct {
 	sync.RWMutex
-	environments         map[string]*EnvironmentCache
+	environments         map[string]*environmentCache
 	environmentEndpoints map[string]string
-	environmentSecrets   map[string]EnvironmentSecret
+	environmentSecrets   map[string]Secret
 	cacheDuration        time.Duration
 	requestTimeout       time.Duration
 	client               *http.Client
@@ -52,7 +87,11 @@ func envLock(suffix string) *sync.Mutex {
 	return l
 }
 
-func ensureSharedCacheInitialized(environmentEndpoints map[string]string, environmentSecrets map[string]EnvironmentSecret, cacheDuration, requestTimeout time.Duration, debug bool, userAgent string, secretHeader, secretHeaderValue string) {
+// Init populates the shared cache from configuration and starts the background
+// refresher. It warms every environment synchronously before returning, so no
+// environment serves traffic with an unpopulated cache. It is idempotent: only
+// the first call per process initializes; later calls return immediately.
+func Init(endpoints map[string]string, secrets map[string]Secret, topHeader, topValue string, cacheDuration, requestTimeout time.Duration, debug bool, userAgent string) {
 	sharedCache.RLock()
 	alreadyInit := sharedCache.initialized
 	sharedCache.RUnlock()
@@ -96,22 +135,22 @@ func ensureSharedCacheInitialized(environmentEndpoints map[string]string, enviro
 
 	sharedCache.Lock()
 	sharedCache.client = client
-	sharedCache.environments = make(map[string]*EnvironmentCache)
-	sharedCache.environmentEndpoints = environmentEndpoints
-	sharedCache.environmentSecrets = environmentSecrets
+	sharedCache.environments = make(map[string]*environmentCache)
+	sharedCache.environmentEndpoints = endpoints
+	sharedCache.environmentSecrets = secrets
 	sharedCache.cacheDuration = cacheDuration
 	sharedCache.requestTimeout = requestTimeout
 	sharedCache.debug = debug
 	sharedCache.userAgent = userAgent
 	sharedCache.initialized = true
 	sharedCache.refresherRunning = false
-	sharedCache.secretHeader = secretHeader
-	sharedCache.secretHeaderValue = secretHeaderValue
+	sharedCache.secretHeader = topHeader
+	sharedCache.secretHeaderValue = topValue
 	sharedCache.Unlock()
 
-	warnMissingSecrets(environmentEndpoints, environmentSecrets, secretHeader, secretHeaderValue)
+	warnMissingSecrets(endpoints, secrets, topHeader, topValue)
 
-	warmupAllEnvironments(environmentEndpoints, debug)
+	warmupAllEnvironments(endpoints, debug)
 
 	startBackgroundRefresher()
 }
@@ -121,11 +160,11 @@ func ensureSharedCacheInitialized(environmentEndpoints map[string]string, enviro
 // secret-gated API returns no whitelist for such an environment, which would
 // lock out every operator the instant maintenance activates. Diagnostic only;
 // this changes no behavior.
-func warnMissingSecrets(environmentEndpoints map[string]string, environmentSecrets map[string]EnvironmentSecret, secretHeader, secretHeaderValue string) {
-	for envSuffix := range environmentEndpoints {
-		perEnv, ok := environmentSecrets[envSuffix]
+func warnMissingSecrets(endpoints map[string]string, secrets map[string]Secret, topHeader, topValue string) {
+	for envSuffix := range endpoints {
+		perEnv, ok := secrets[envSuffix]
 		hasPerEnv := ok && perEnv.Value != ""
-		hasTopLevel := secretHeader != "" && secretHeaderValue != ""
+		hasTopLevel := topHeader != "" && topValue != ""
 		if !hasPerEnv && !hasTopLevel {
 			label := envSuffix
 			if label == "" {
@@ -137,11 +176,11 @@ func warnMissingSecrets(environmentEndpoints map[string]string, environmentSecre
 }
 
 // warmupAllEnvironments fetches every environment's maintenance status before
-// New returns, so no environment serves traffic with an unpopulated cache
+// Init returns, so no environment serves traffic with an unpopulated cache
 // during the startup window. Environments warm concurrently and the call waits
 // for all of them. An environment whose API is unreachable still gives up after
 // its retries (staying fail-open) — that is the intended availability posture.
-func warmupAllEnvironments(environmentEndpoints map[string]string, debug bool) {
+func warmupAllEnvironments(endpoints map[string]string, debug bool) {
 	if debug {
 		fmt.Fprintf(logx.Out, "[MaintenanceCheck] Performing initial fetch for all environments\n")
 	}
@@ -151,7 +190,7 @@ func warmupAllEnvironments(environmentEndpoints map[string]string, debug bool) {
 	sharedCache.RUnlock()
 
 	var warmupWG sync.WaitGroup
-	for envSuffix := range environmentEndpoints {
+	for envSuffix := range endpoints {
 		warmupWG.Add(1)
 		go func(suffix string) {
 			defer warmupWG.Done()
@@ -183,17 +222,17 @@ func warmupEnvironment(envSuffix string, debug bool, stopCh <-chan struct{}) {
 	}
 }
 
-func updateEnvironmentCache(envSuffix string, result *MaintenanceResponse, duration time.Duration, failedAttempts int, success bool) {
+func updateEnvironmentCache(envSuffix string, result *maintenanceResponse, duration time.Duration, failedAttempts int, success bool) {
 	sharedCache.Lock()
 	defer sharedCache.Unlock()
 
 	if sharedCache.environments == nil {
-		sharedCache.environments = make(map[string]*EnvironmentCache)
+		sharedCache.environments = make(map[string]*environmentCache)
 	}
 
 	envCache, exists := sharedCache.environments[envSuffix]
 	if !exists {
-		envCache = &EnvironmentCache{}
+		envCache = &environmentCache{}
 		sharedCache.environments[envSuffix] = envCache
 	}
 
@@ -241,7 +280,10 @@ func suffixMatchesDomain(domain, suffix string) bool {
 	return domain[len(domain)-len(suffix)-1] == '.'
 }
 
-func getMaintenanceStatusForDomain(domain string) (bool, []string) {
+// StatusForDomain returns the cached maintenance state for the environment that
+// owns domain: whether maintenance is active and, when active, a copy of the
+// whitelist. An uninitialized cache or an unknown environment reads as inactive.
+func StatusForDomain(domain string) (bool, []string) {
 	sharedCache.RLock()
 	defer sharedCache.RUnlock()
 
@@ -285,11 +327,12 @@ func getEndpointForDomain(domain string) string {
 		return defaultEndpoint
 	}
 
-	return defaultMaintenanceEndpoint
+	return DefaultEndpoint
 }
 
-// CloseSharedCache should be called if you need to clean up resources
-func CloseSharedCache() {
+// Close releases background-refresh resources. It is safe to call more than
+// once; only the first call performs the shutdown.
+func Close() {
 	shutdownOnce.Do(func() {
 		initLock.Lock()
 		defer initLock.Unlock()
@@ -310,7 +353,7 @@ func CloseSharedCache() {
 			// Wait a bit for goroutines to terminate
 			time.Sleep(200 * time.Millisecond)
 
-			// Clear client/initialized under the cache lock — ServeHTTP and the
+			// Clear client/initialized under the cache lock — readers and the
 			// refresher read these fields under the RWMutex, so writing them under
 			// initLock alone is a data race.
 			sharedCache.Lock()
@@ -325,14 +368,14 @@ func CloseSharedCache() {
 	})
 }
 
-// ResetSharedCacheForTesting resets all shared state for testing
-func ResetSharedCacheForTesting() {
+// ResetForTesting resets all shared state for testing.
+func ResetForTesting() {
 	initLock.Lock()
 	defer initLock.Unlock()
 
-	// Signal the refresher to stop. CloseSharedCache may have already closed
-	// stopCh (and cleared initialized); only close it here if it is still open,
-	// to avoid a double close.
+	// Signal the refresher to stop. Close may have already closed stopCh (and
+	// cleared initialized); only close it here if it is still open, to avoid a
+	// double close.
 	if sharedCache.initialized && sharedCache.stopCh != nil {
 		close(sharedCache.stopCh)
 	}
@@ -341,7 +384,7 @@ func ResetSharedCacheForTesting() {
 	// stop and clear refresherRunning before overwriting sharedCache. Reading the
 	// flag under RLock establishes a happens-before edge with the goroutine's
 	// final write, so the lock-free wholesale reset below cannot race it — this
-	// holds even when CloseSharedCache already cleared initialized.
+	// holds even when Close already cleared initialized.
 	maxWait := 1 * time.Second
 	startTime := time.Now()
 	for time.Since(startTime) < maxWait {

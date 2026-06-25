@@ -11,6 +11,7 @@ import (
 	"github.com/CitronusAcademy/traefik-maintenance-plugin/internal/cors"
 	"github.com/CitronusAcademy/traefik-maintenance-plugin/internal/ip"
 	"github.com/CitronusAcademy/traefik-maintenance-plugin/internal/logx"
+	"github.com/CitronusAcademy/traefik-maintenance-plugin/internal/maintenance"
 	"github.com/CitronusAcademy/traefik-maintenance-plugin/internal/skip"
 )
 
@@ -49,11 +50,16 @@ func New(_ context.Context, next http.Handler, config *Config, name string) (htt
 	environmentEndpoints := config.EnvironmentEndpoints
 	if len(environmentEndpoints) == 0 {
 		environmentEndpoints = map[string]string{
-			"": defaultMaintenanceEndpoint,
+			"": maintenance.DefaultEndpoint,
 		}
 	}
 
-	ensureSharedCacheInitialized(environmentEndpoints, config.EnvironmentSecrets, cacheDuration, requestTimeout, config.Debug, userAgent, config.SecretHeader, config.SecretHeaderValue)
+	secrets := make(map[string]maintenance.Secret, len(config.EnvironmentSecrets))
+	for k, s := range config.EnvironmentSecrets {
+		secrets[k] = maintenance.Secret{Header: s.Header, Value: s.Value}
+	}
+
+	maintenance.Init(environmentEndpoints, secrets, config.SecretHeader, config.SecretHeaderValue, cacheDuration, requestTimeout, config.Debug, userAgent)
 
 	skipPrefixesCopy := make([]string, len(config.SkipPrefixes))
 	copy(skipPrefixesCopy, config.SkipPrefixes)
@@ -162,7 +168,7 @@ func (m *MaintenanceCheck) ServeHTTP(rw http.ResponseWriter, req *http.Request) 
 		return
 	}
 
-	isActive, whitelist := getMaintenanceStatusForDomain(normalizedHost)
+	isActive, whitelist := maintenance.StatusForDomain(normalizedHost)
 	if m.debug {
 		fmt.Fprintf(logx.Out, "[MaintenanceCheck] Maintenance status: active=%v, whitelist=%v\n", isActive, whitelist)
 	}
@@ -204,7 +210,7 @@ func (m *MaintenanceCheck) handleCORSPreflightRequest(rw http.ResponseWriter, re
 		return false
 	}
 
-	isActive, whitelist := getMaintenanceStatusForDomain(normalizedHost)
+	isActive, whitelist := maintenance.StatusForDomain(normalizedHost)
 	if !isActive {
 		return false
 	}

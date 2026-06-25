@@ -1,4 +1,4 @@
-package traefik_maintenance_plugin
+package maintenance
 
 import (
 	"net/http"
@@ -9,8 +9,8 @@ import (
 )
 
 func TestWarmupIsSynchronousForAllEnvironments(t *testing.T) {
-	ResetSharedCacheForTesting()
-	defer ResetSharedCacheForTesting()
+	ResetForTesting()
+	defer ResetForTesting()
 
 	var hits int32
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -20,12 +20,12 @@ func TestWarmupIsSynchronousForAllEnvironments(t *testing.T) {
 	defer ts.Close()
 
 	endpoints := map[string]string{".a": ts.URL, ".b": ts.URL, ".c": ts.URL, "": ts.URL}
-	ensureSharedCacheInitialized(endpoints, nil, 60*time.Second, 5*time.Second, false, "ua", "", "")
+	Init(endpoints, nil, "", "", 60*time.Second, 5*time.Second, false, "ua")
 
-	// By the time init returns, EVERY environment must already be cached active —
+	// By the time Init returns, EVERY environment must already be cached active —
 	// not just one. No sleeps: this asserts synchronous warmup.
 	for _, host := range []string{"x.a", "x.b", "x.c", "x.other"} {
-		if active, _ := getMaintenanceStatusForDomain(host); !active {
+		if active, _ := StatusForDomain(host); !active {
 			t.Fatalf("environment for host %q not warmed synchronously", host)
 		}
 	}
@@ -35,8 +35,8 @@ func TestWarmupIsSynchronousForAllEnvironments(t *testing.T) {
 // fetch fails (no cache initialized → refreshMaintenanceStatusForEnvironment
 // returns false), instead of sleeping through the full backoff schedule.
 func TestWarmupEnvironmentStopsOnClosedChannel(t *testing.T) {
-	ResetSharedCacheForTesting()
-	defer ResetSharedCacheForTesting()
+	ResetForTesting()
+	defer ResetForTesting()
 
 	stop := make(chan struct{})
 	close(stop)

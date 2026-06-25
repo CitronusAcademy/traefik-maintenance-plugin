@@ -1,4 +1,4 @@
-package traefik_maintenance_plugin
+package maintenance
 
 import "testing"
 

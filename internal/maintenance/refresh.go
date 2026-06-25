@@ -1,4 +1,4 @@
-package traefik_maintenance_plugin
+package maintenance
 
 import (
 	"context"
@@ -85,7 +85,7 @@ func refreshMaintenanceStatusForEnvironment(envSuffix string) bool {
 
 	envCache, exists := sharedCache.environments[envSuffix]
 	if !exists {
-		envCache = &EnvironmentCache{
+		envCache = &environmentCache{
 			expiry: time.Now().Add(-1 * time.Minute),
 		}
 	}
@@ -116,8 +116,8 @@ func refreshMaintenanceStatusForEnvironment(envSuffix string) bool {
 		fmt.Fprintf(logx.Out, "[MaintenanceCheck] Fetching maintenance status from '%s' for environment '%s'\n", endpoint, envSuffix)
 	}
 
-	// A nil client (cache torn down by CloseSharedCache) is not a fetch failure:
-	// skip without applying backoff or touching the cached state.
+	// A nil client (cache torn down by Close) is not a fetch failure: skip
+	// without applying backoff or touching the cached state.
 	if client == nil {
 		if debug {
 			fmt.Fprintf(logx.Out, "[MaintenanceCheck] HTTP client is nil, skipping refresh\n")
@@ -148,7 +148,7 @@ func refreshMaintenanceStatusForEnvironment(envSuffix string) bool {
 // transport error, non-200 status, decode error, or a 200 whose body carries
 // no maintenance object — at which point the caller applies backoff and keeps
 // the prior cached state. The caller is responsible for the nil-client check.
-func fetchMaintenanceState(client *http.Client, endpoint, userAgent, secretHeader, secretHeaderValue string, requestTimeout time.Duration, envSuffix string, debug bool) (*MaintenanceResponse, bool) {
+func fetchMaintenanceState(client *http.Client, endpoint, userAgent, secretHeader, secretHeaderValue string, requestTimeout time.Duration, envSuffix string, debug bool) (*maintenanceResponse, bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 	defer cancel()
 
@@ -196,7 +196,7 @@ func fetchMaintenanceState(client *http.Client, endpoint, userAgent, secretHeade
 	const maxResponseSize = 10 * 1024 * 1024
 	limitedReader := http.MaxBytesReader(nil, resp.Body, maxResponseSize)
 
-	var result MaintenanceResponse
+	var result maintenanceResponse
 	decoder := json.NewDecoder(limitedReader)
 	if err := decoder.Decode(&result); err != nil {
 		if debug {

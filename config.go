@@ -1,10 +1,8 @@
 package traefik_maintenance_plugin
 
 import (
-	"time"
+	"github.com/CitronusAcademy/traefik-maintenance-plugin/internal/maintenance"
 )
-
-const defaultMaintenanceEndpoint = "http://maintenance-service/v1/configurations/"
 
 type Config struct {
 	EnvironmentEndpoints     map[string]string            `json:"environmentEndpoints,omitempty"`
@@ -33,7 +31,7 @@ type EnvironmentSecret struct {
 func CreateConfig() *Config {
 	return &Config{
 		EnvironmentEndpoints: map[string]string{
-			"": defaultMaintenanceEndpoint,
+			"": maintenance.DefaultEndpoint,
 		},
 		EnvironmentSecrets: map[string]EnvironmentSecret{
 			"": {Header: "X-Plugin-Secret", Value: ""},
@@ -62,20 +60,4 @@ func CreateConfig() *Config {
 		Debug:                   false,
 		CorsAllowAnyOrigin:      true,
 	}
-}
-
-type MaintenanceResponse struct {
-	SystemConfig *struct {
-		Maintenance *struct {
-			IsActive  bool     `json:"is_active"`
-			Whitelist []string `json:"whitelist"`
-		} `json:"maintenance"`
-	} `json:"system_config"`
-}
-
-type EnvironmentCache struct {
-	isActive       bool
-	whitelist      []string
-	expiry         time.Time
-	failedAttempts int
 }

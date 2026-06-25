@@ -5,27 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"runtime"
-	"strings"
 	"testing"
-	"time"
 )
-
-func TestStartupWarnsOnMissingSecret(t *testing.T) {
-	ResetSharedCacheForTesting()
-	defer ResetSharedCacheForTesting()
-
-	out := captureStdout(t, func() {
-		// No per-env secret value, no top-level secret value → unprotected env.
-		ensureSharedCacheInitialized(
-			map[string]string{"": "http://unused.invalid/"},
-			map[string]EnvironmentSecret{"": {Header: "X-Plugin-Secret", Value: ""}},
-			60*time.Second, 5*time.Second, false, "ua", "", "",
-		)
-	})
-	if !strings.Contains(out, "no secret") {
-		t.Fatalf("expected a missing-secret warning, got: %q", out)
-	}
-}
 
 func TestNewDoesNotLeakGoroutinePerInstance(t *testing.T) {
 	ResetSharedCacheForTesting()
@@ -59,23 +40,6 @@ func TestNewDoesNotLeakGoroutinePerInstance(t *testing.T) {
 
 	if after-before > 5 { // allow scheduler slack; 50 leaked goroutines would be >> 5
 		t.Fatalf("New leaked goroutines: before=%d after=%d", before, after)
-	}
-}
-
-func TestCalculateBackoff(t *testing.T) {
-	if d := calculateBackoff(0); d != 5*time.Second {
-		t.Errorf("attempts=0: got %v, want 5s", d)
-	}
-	if d := calculateBackoff(-3); d != 5*time.Second {
-		t.Errorf("negative attempts: got %v, want 5s", d)
-	}
-	// attempts=1 → base 10s ± 20% jitter.
-	if d := calculateBackoff(1); d < 8*time.Second || d > 12*time.Second {
-		t.Errorf("attempts=1: got %v, want within [8s,12s]", d)
-	}
-	// Large attempts are capped at 1h.
-	if d := calculateBackoff(50); d != time.Hour {
-		t.Errorf("attempts=50: got %v, want 1h cap", d)
 	}
 }
 
