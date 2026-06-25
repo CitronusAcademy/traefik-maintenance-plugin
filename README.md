@@ -215,23 +215,23 @@ that header before it reaches Traefik.
 
 ## Parameters
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `environmentEndpoints` | `{"": "http://maintenance-service/v1/configurations/"}` | Map of domain suffix → API endpoint. Longest-suffix match wins; `""` is the fallback. |
-| `environmentSecrets` | `{"": {X-Plugin-Secret, ""}}` | Map of domain suffix → `{header, value}` secret sent to that environment's API. |
-| `cacheDurationInSeconds` | `10` | Background poll interval. **Not** a per-request cache. |
-| `requestTimeoutInSeconds` | `5` | Timeout for each maintenance API request. |
-| `maintenanceStatusCode` | `512` | HTTP status returned to blocked clients during maintenance. |
-| `skipPrefixes` | `[]` | URL path prefixes that always bypass maintenance. |
-| `skipHosts` | `[]` | Hostnames that always bypass maintenance; supports `*.example.com`. |
-| `allowHTMLWhenMaintenance` | `true` | Allow GET/HEAD requests that accept `text/html` (lets a status page load while APIs stay blocked). |
-| `allowStaticExtensions` | common web asset extensions | File extensions allowed for GET/HEAD during maintenance. |
-| `allowedOrigins` | `[]` | CORS origin allow-list. Empty reflects any `Origin` (without credentials); non-empty reflects only listed origins and sends `Access-Control-Allow-Credentials: true` for them. |
-| `corsAllowAnyOrigin` | `true` | When `allowedOrigins` is empty, reflect any `Origin` (default). Set `false` to send no CORS `Access-Control-Allow-Origin` unless the request's `Origin` matches `allowedOrigins`. |
-| `trustedProxies` | `[]` | CIDR ranges for trusted immediate peers. When set, `Cf-Connecting-Ip` is only honored if the request's direct peer (`RemoteAddr`) falls in one of these ranges; otherwise no client IP is resolved (blocked during maintenance). Empty = trust the header unconditionally. |
-| `strictAssetMatching` | `false` | When `true`, match `allowStaticExtensions` against the URL's real file extension (`path.Ext`), so paths like `/data.json/x` are not treated as static assets. |
-| `secretHeader` / `secretHeaderValue` | `X-Plugin-Secret` / `""` | Fallback secret header used when an environment has no per-environment secret. |
-| `debug` | `false` | Verbose stdout logging. See the warning in Operational notes. |
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `environmentEndpoints` | `map[string]string` | `{"": "http://maintenance-service/v1/configurations/"}` | Domain suffix → API endpoint. Longest-suffix match wins; `""` is the fallback. |
+| `environmentSecrets` | `map[string]{header,value}` | `{"": {"X-Plugin-Secret", ""}}` | Domain suffix → secret header sent to that environment's API. |
+| `cacheDurationInSeconds` | `int` | `10` | Background poll interval. **Not** a per-request cache. |
+| `requestTimeoutInSeconds` | `int` | `5` | Timeout for each maintenance API request. |
+| `maintenanceStatusCode` | `int` | `512` | HTTP status returned to blocked clients during maintenance. |
+| `skipPrefixes` | `[]string` | `[]` | URL path prefixes that always bypass maintenance. |
+| `skipHosts` | `[]string` | `[]` | Hostnames that always bypass maintenance; supports `*.example.com`. |
+| `allowHTMLWhenMaintenance` | `bool` | `true` | Allow GET/HEAD requests that accept `text/html` (lets a status page load while APIs stay blocked). |
+| `allowStaticExtensions` | `[]string` | `.js .css .svg .ico .png .jpg .jpeg .gif .webp .woff .woff2 .ttf .map` | File extensions allowed for GET/HEAD during maintenance. |
+| `strictAssetMatching` | `bool` | `false` | When `true`, match `allowStaticExtensions` against the URL's real file extension (`path.Ext`), so `/data.json/x` is not treated as static. |
+| `allowedOrigins` | `[]string` | `[]` | CORS origin allow-list. See **Operational notes** for the credentials behavior. |
+| `corsAllowAnyOrigin` | `bool` | `true` | When `allowedOrigins` is empty: `true` reflects any `Origin` (no credentials); `false` sends no CORS origin header. |
+| `trustedProxies` | `[]string` | `[]` | CIDR ranges for trusted direct peers. When set, `Cf-Connecting-Ip` is honored only if `RemoteAddr` falls in one of them. Empty = trust unconditionally. |
+| `secretHeader` / `secretHeaderValue` | `string` / `string` | `X-Plugin-Secret` / `""` | Fallback secret used when an environment has no per-environment secret. |
+| `debug` | `bool` | `false` | Verbose stdout logging. See the warning in **Operational notes**. |
 
 ## Operational notes
 
