@@ -28,3 +28,22 @@ jobs:
         run: go vet ./...
       - name: Test (race + coverage)
         run: go test -race -covermode=atomic -coverprofile=coverage.out ./...
+
+  yaegi:
+    runs-on: ubuntu-latest
+    env:
+      GO111MODULE: "on"
+      GOPATH: ${{ github.workspace }}/go
+      YAEGI_VERSION: v0.16.1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: go/src/github.com/${{ github.repository }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/src/github.com/${{ github.repository }}/go.mod
+      - name: Install Yaegi
+        run: curl -sfL https://raw.githubusercontent.com/traefik/yaegi/master/install.sh | bash -s -- -b "$(go env GOPATH)/bin" "${YAEGI_VERSION}"
+      - name: Yaegi test
+        working-directory: go/src/github.com/${{ github.repository }}
+        run: "$(go env GOPATH)/bin/yaegi test -v ."
