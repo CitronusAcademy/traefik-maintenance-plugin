@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 )
@@ -90,7 +89,7 @@ func New(_ context.Context, next http.Handler, config *Config, name string) (htt
 		if _, cidr, err := net.ParseCIDR(entry); err == nil {
 			trustedProxies = append(trustedProxies, cidr)
 		} else if config.Debug {
-			fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Warning: ignoring invalid trustedProxies entry %q: %v\n", entry, err)
+			fmt.Fprintf(logOut, "[MaintenanceCheck] Warning: ignoring invalid trustedProxies entry %q: %v\n", entry, err)
 		}
 	}
 
@@ -122,12 +121,12 @@ func (m *MaintenanceCheck) ServeHTTP(rw http.ResponseWriter, req *http.Request) 
 	normalizedHost := m.extractHostWithoutPort(req.Host)
 
 	if m.debug {
-		fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Evaluating request: host=%s, path=%s\n", normalizedHost, req.URL.Path)
+		fmt.Fprintf(logOut, "[MaintenanceCheck] Evaluating request: host=%s, path=%s\n", normalizedHost, req.URL.Path)
 	}
 
 	if m.isHostSkipped(normalizedHost) {
 		if m.debug {
-			fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Host '%s' is in skip list, bypassing maintenance check\n", normalizedHost)
+			fmt.Fprintf(logOut, "[MaintenanceCheck] Host '%s' is in skip list, bypassing maintenance check\n", normalizedHost)
 		}
 		m.next.ServeHTTP(rw, req)
 		return
@@ -135,7 +134,7 @@ func (m *MaintenanceCheck) ServeHTTP(rw http.ResponseWriter, req *http.Request) 
 
 	if m.isPrefixSkipped(req.URL.Path) {
 		if m.debug {
-			fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Path '%s' matches skip prefix, bypassing maintenance check\n", req.URL.Path)
+			fmt.Fprintf(logOut, "[MaintenanceCheck] Path '%s' matches skip prefix, bypassing maintenance check\n", req.URL.Path)
 		}
 		m.next.ServeHTTP(rw, req)
 		return
@@ -147,13 +146,13 @@ func (m *MaintenanceCheck) ServeHTTP(rw http.ResponseWriter, req *http.Request) 
 
 	isActive, whitelist := getMaintenanceStatusForDomain(normalizedHost)
 	if m.debug {
-		fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Maintenance status: active=%v, whitelist=%v\n", isActive, whitelist)
+		fmt.Fprintf(logOut, "[MaintenanceCheck] Maintenance status: active=%v, whitelist=%v\n", isActive, whitelist)
 	}
 
 	if isActive {
 		if m.allowHTML && isHTMLRequest(req) {
 			if m.debug {
-				fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Maintenance active but request accepts HTML, bypassing maintenance check\n")
+				fmt.Fprintf(logOut, "[MaintenanceCheck] Maintenance active but request accepts HTML, bypassing maintenance check\n")
 			}
 			m.next.ServeHTTP(rw, req)
 			return
@@ -161,7 +160,7 @@ func (m *MaintenanceCheck) ServeHTTP(rw http.ResponseWriter, req *http.Request) 
 
 		if isStaticAssetRequest(req, m.allowStaticExts, m.strictAssetMatching) {
 			if m.debug {
-				fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Maintenance active but path '%s' matches allowed static extensions, bypassing maintenance check\n", req.URL.Path)
+				fmt.Fprintf(logOut, "[MaintenanceCheck] Maintenance active but path '%s' matches allowed static extensions, bypassing maintenance check\n", req.URL.Path)
 			}
 			m.next.ServeHTTP(rw, req)
 			return
@@ -177,7 +176,7 @@ func (m *MaintenanceCheck) ServeHTTP(rw http.ResponseWriter, req *http.Request) 
 	}
 
 	if m.debug {
-		fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Maintenance mode is inactive, allowing request\n")
+		fmt.Fprintf(logOut, "[MaintenanceCheck] Maintenance mode is inactive, allowing request\n")
 	}
 	m.next.ServeHTTP(rw, req)
 }

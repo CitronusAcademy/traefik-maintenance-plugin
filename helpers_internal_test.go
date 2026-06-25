@@ -1,9 +1,8 @@
 package traefik_maintenance_plugin
 
 import (
-	"io"
+	"bytes"
 	"net/http"
-	"os"
 	"testing"
 )
 
@@ -15,28 +14,16 @@ func nopHandler() http.Handler {
 	return http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
 }
 
-// captureStdout redirects os.Stdout for the duration of fn and returns whatever
-// fn wrote there. Test-only; it mutates the global os.Stdout, so callers must
-// not run in parallel. A reader goroutine drains the pipe to avoid blocking
-// when fn writes more than the pipe buffer.
+// captureStdout redirects the package log writer for the duration of fn and
+// returns whatever fn wrote there. Test-only; mutates the package-global
+// logOut, so callers must not run in parallel. Swapping logOut (not os.Stdout)
+// keeps this runnable under Yaegi.
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
-	orig := os.Stdout
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe: %v", err)
-	}
-	os.Stdout = w
-
-	done := make(chan string, 1)
-	go func() {
-		buf, _ := io.ReadAll(r)
-		done <- string(buf)
-	}()
-
+	orig := logOut
+	var buf bytes.Buffer
+	logOut = &buf
+	defer func() { logOut = orig }()
 	fn()
-
-	_ = w.Close()
-	os.Stdout = orig
-	return <-done
+	return buf.String()
 }

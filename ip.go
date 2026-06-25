@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"os"
 	"strings"
 )
 
@@ -24,14 +23,14 @@ func getAllClientIPs(req *http.Request, debug bool) []string {
 	var allIPs []string
 
 	if debug {
-		fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Extracting client IPs from %s header only\n", cfHeader)
+		fmt.Fprintf(logOut, "[MaintenanceCheck] Extracting client IPs from %s header only\n", cfHeader)
 	}
 
 	// Get Cf-Connecting-Ip header value
 	addresses := req.Header.Get(cfHeader)
 	if addresses != "" {
 		if debug {
-			fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Processing header %s with value: %s\n", cfHeader, addresses)
+			fmt.Fprintf(logOut, "[MaintenanceCheck] Processing header %s with value: %s\n", cfHeader, addresses)
 		}
 
 		// Handle comma-separated values (CSV) or single value
@@ -45,17 +44,17 @@ func getAllClientIPs(req *http.Request, debug bool) []string {
 					uniqueIPs[ip] = struct{}{}
 					allIPs = append(allIPs, ip)
 					if debug {
-						fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Extracted IP from %s header: %s\n", cfHeader, ip)
+						fmt.Fprintf(logOut, "[MaintenanceCheck] Extracted IP from %s header: %s\n", cfHeader, ip)
 					}
 				}
 			}
 		}
 	} else if debug {
-		fmt.Fprintf(os.Stdout, "[MaintenanceCheck] %s header not found or empty\n", cfHeader)
+		fmt.Fprintf(logOut, "[MaintenanceCheck] %s header not found or empty\n", cfHeader)
 	}
 
 	if debug {
-		fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Total unique IPs extracted: %d - %v\n", len(allIPs), allIPs)
+		fmt.Fprintf(logOut, "[MaintenanceCheck] Total unique IPs extracted: %d - %v\n", len(allIPs), allIPs)
 	}
 
 	return allIPs
@@ -117,16 +116,16 @@ func (m *MaintenanceCheck) isClientAllowed(req *http.Request, whitelist []string
 
 	if len(whitelist) == 0 {
 		if m.debug {
-			fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Whitelist is empty, blocking request\n")
+			fmt.Fprintf(logOut, "[MaintenanceCheck] Whitelist is empty, blocking request\n")
 		}
 		return false
 	}
 
 	// Extended debug info for whitelist
 	if m.debug {
-		fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Maintenance whitelist entries: %d items\n", len(whitelist))
+		fmt.Fprintf(logOut, "[MaintenanceCheck] Maintenance whitelist entries: %d items\n", len(whitelist))
 		for i, entry := range whitelist {
-			fmt.Fprintf(os.Stdout, "[MaintenanceCheck]   Whitelist[%d]: %s\n", i, entry)
+			fmt.Fprintf(logOut, "[MaintenanceCheck]   Whitelist[%d]: %s\n", i, entry)
 		}
 	}
 
@@ -134,7 +133,7 @@ func (m *MaintenanceCheck) isClientAllowed(req *http.Request, whitelist []string
 	for _, entry := range whitelist {
 		if entry == "*" {
 			if m.debug {
-				fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Wildcard (*) found in whitelist, allowing request\n")
+				fmt.Fprintf(logOut, "[MaintenanceCheck] Wildcard (*) found in whitelist, allowing request\n")
 			}
 			return true
 		}
@@ -145,7 +144,7 @@ func (m *MaintenanceCheck) isClientAllowed(req *http.Request, whitelist []string
 	// spoofable and we resolve no client IP (block during maintenance).
 	if !m.remoteAddrTrusted(req) {
 		if m.debug {
-			fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Request peer %s is not a trusted proxy; ignoring Cf-Connecting-Ip\n", req.RemoteAddr)
+			fmt.Fprintf(logOut, "[MaintenanceCheck] Request peer %s is not a trusted proxy; ignoring Cf-Connecting-Ip\n", req.RemoteAddr)
 		}
 		return false
 	}
@@ -156,14 +155,14 @@ func (m *MaintenanceCheck) isClientAllowed(req *http.Request, whitelist []string
 	// No IPs found at all
 	if len(clientIPs) == 0 {
 		if m.debug {
-			fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Could not determine any client IPs, blocking request\n")
+			fmt.Fprintf(logOut, "[MaintenanceCheck] Could not determine any client IPs, blocking request\n")
 		}
 		return false
 	}
 
 	if m.debug {
-		fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Client IPs for whitelist check: %v\n", clientIPs)
-		fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Beginning whitelist evaluation for %d IPs\n", len(clientIPs))
+		fmt.Fprintf(logOut, "[MaintenanceCheck] Client IPs for whitelist check: %v\n", clientIPs)
+		fmt.Fprintf(logOut, "[MaintenanceCheck] Beginning whitelist evaluation for %d IPs\n", len(clientIPs))
 	}
 
 	// Check each client IP against the whitelist
@@ -181,7 +180,7 @@ func (m *MaintenanceCheck) isClientAllowed(req *http.Request, whitelist []string
 	}
 
 	if m.debug {
-		fmt.Fprintf(os.Stdout, "[MaintenanceCheck] None of the client IPs %v matched whitelist, blocking request\n", clientIPs)
+		fmt.Fprintf(logOut, "[MaintenanceCheck] None of the client IPs %v matched whitelist, blocking request\n", clientIPs)
 	}
 	return false
 }
@@ -194,7 +193,7 @@ func (m *MaintenanceCheck) matchWhitelistEntry(clientIP, whitelistEntry string) 
 	// Exact match (IPv6-canonical via net.ParseIP; non-IP entries compared raw)
 	if ipExactMatch(clientIP, whitelistEntry) {
 		if m.debug {
-			fmt.Fprintf(os.Stdout, "[MaintenanceCheck] IP '%s' matches whitelist entry '%s', allowing request\n", clientIP, whitelistEntry)
+			fmt.Fprintf(logOut, "[MaintenanceCheck] IP '%s' matches whitelist entry '%s', allowing request\n", clientIP, whitelistEntry)
 		}
 		return true
 	}
@@ -202,21 +201,21 @@ func (m *MaintenanceCheck) matchWhitelistEntry(clientIP, whitelistEntry string) 
 	// CIDR notation match
 	if strings.Contains(whitelistEntry, "/") {
 		if m.debug {
-			fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Checking if IP '%s' is in CIDR range '%s'\n", clientIP, whitelistEntry)
+			fmt.Fprintf(logOut, "[MaintenanceCheck] Checking if IP '%s' is in CIDR range '%s'\n", clientIP, whitelistEntry)
 		}
 
 		match, err := isCIDRMatch(clientIP, whitelistEntry)
 		if err != nil {
 			if m.debug {
-				fmt.Fprintf(os.Stdout, "[MaintenanceCheck] Error checking CIDR match: %v\n", err)
+				fmt.Fprintf(logOut, "[MaintenanceCheck] Error checking CIDR match: %v\n", err)
 			}
 		} else if match {
 			if m.debug {
-				fmt.Fprintf(os.Stdout, "[MaintenanceCheck] IP '%s' is in CIDR range '%s', allowing request\n", clientIP, whitelistEntry)
+				fmt.Fprintf(logOut, "[MaintenanceCheck] IP '%s' is in CIDR range '%s', allowing request\n", clientIP, whitelistEntry)
 			}
 			return true
 		} else if m.debug {
-			fmt.Fprintf(os.Stdout, "[MaintenanceCheck] IP '%s' is NOT in CIDR range '%s'\n", clientIP, whitelistEntry)
+			fmt.Fprintf(logOut, "[MaintenanceCheck] IP '%s' is NOT in CIDR range '%s'\n", clientIP, whitelistEntry)
 		}
 	}
 
