@@ -149,6 +149,52 @@ spec:
       debug: false
 ```
 
+### Other provider formats
+
+The same middleware in Traefik's **file provider** (dynamic config, YAML):
+
+```yaml
+http:
+  middlewares:
+    maintenance-check:
+      plugin:
+        maintenanceCheck:
+          environmentEndpoints:
+            "": "https://maintenance-api.example.com/v1/configurations/"
+          maintenanceStatusCode: 512
+          skipPrefixes:
+            - "/admin"
+  routers:
+    my-router:
+      rule: "Host(`example.com`)"
+      service: my-service
+      middlewares:
+        - maintenance-check
+```
+
+File provider (dynamic config, TOML):
+
+```toml
+[http.middlewares.maintenance-check.plugin.maintenanceCheck]
+  maintenanceStatusCode = 512
+  skipPrefixes = ["/admin"]
+  [http.middlewares.maintenance-check.plugin.maintenanceCheck.environmentEndpoints]
+    "" = "https://maintenance-api.example.com/v1/configurations/"
+```
+
+Docker labels:
+
+```yaml
+labels:
+  - "traefik.http.routers.my-router.middlewares=maintenance-check"
+  - "traefik.http.middlewares.maintenance-check.plugin.maintenanceCheck.maintenanceStatusCode=512"
+  - "traefik.http.middlewares.maintenance-check.plugin.maintenanceCheck.skipPrefixes[0]=/admin"
+```
+
+> The map-typed options (`environmentEndpoints`, `environmentSecrets`) use the empty-string `""` key for the default
+> environment, which is awkward to express as a docker label. If you only use docker labels and need a custom endpoint,
+> prefer the file or Kubernetes provider for those two options, or route via a non-empty domain suffix.
+
 ### Environment-based endpoint selection
 
 `environmentEndpoints` maps a domain suffix to a maintenance API endpoint. The plugin picks
@@ -254,11 +300,12 @@ These are the non-obvious behaviors worth knowing before relying on the plugin.
   configured secret header — are redacted to `[REDACTED]`; all other headers are
   logged verbatim. Still keep it off in any shared or production environment.
 
-- **CORS credentials require an explicit origin allow-list.** With `allowedOrigins`
-  empty, the plugin reflects whatever `Origin` the request sent but does **not** send
-  `Access-Control-Allow-Credentials` — reflecting an arbitrary origin together with
-  credentials is the insecure CORS combination. Only origins you list explicitly in
-  `allowedOrigins` receive `Access-Control-Allow-Credentials: true`.
+- **CORS origin & credentials behavior.** With `allowedOrigins` empty and `corsAllowAnyOrigin: true`
+  (the default), the plugin reflects whatever `Origin` the request sent but does **not** send
+  `Access-Control-Allow-Credentials` — reflecting an arbitrary origin together with credentials is the
+  insecure CORS combination. Set `corsAllowAnyOrigin: false` to send no origin header unless the request's
+  `Origin` is in `allowedOrigins`. Only origins listed explicitly in `allowedOrigins` receive
+  `Access-Control-Allow-Credentials: true`.
 
 - **Fail-open on API errors.** If the API is unreachable or returns an error, the plugin
   keeps serving the last cached state and retries with exponential backoff. On a cold start
