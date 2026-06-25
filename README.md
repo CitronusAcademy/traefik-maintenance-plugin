@@ -1,63 +1,120 @@
 # Traefik Maintenance Plugin
 
-A robust middleware plugin for Traefik that checks for maintenance status from an API and blocks requests if maintenance is active.
+<p align="center">
+  <a href="https://github.com/CitronusAcademy/traefik-maintenance-plugin/actions/workflows/ci.yml"><img src="https://github.com/CitronusAcademy/traefik-maintenance-plugin/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://codecov.io/gh/CitronusAcademy/traefik-maintenance-plugin"><img src="https://codecov.io/gh/CitronusAcademy/traefik-maintenance-plugin/branch/main/graph/badge.svg" alt="codecov"></a>
+  <a href="go.mod"><img src="https://img.shields.io/github/go-mod/go-version/CitronusAcademy/traefik-maintenance-plugin" alt="Go Version"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
+</p>
+
+A Traefik middleware plugin that puts a service into maintenance mode. It polls a
+configurable HTTP API in the background for maintenance status and an IP whitelist, and
+blocks requests while maintenance is active — except for whitelisted clients and any paths
+or hosts you choose to exempt.
+
+## Table of contents
+
+- [Quick start](#quick-start)
+- [How it works](#how-it-works)
+- [Features](#features)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [API contract](#api-contract)
+- [Client IP detection](#client-ip-detection)
+- [Parameters](#parameters)
+- [Operational notes](#operational-notes)
+- [Development](#development)
+
+## Quick start
+
+**1. Register the plugin** in Traefik's static configuration:
+
+```yaml
+experimental:
+  plugins:
+    maintenanceCheck:
+      moduleName: github.com/CitronusAcademy/traefik-maintenance-plugin
+      version: "v1.0.0"
+```
+
+**2. Attach the middleware** to your router (Kubernetes CRD shown):
+
+```yaml
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: maintenance-check
+spec:
+  plugin:
+    maintenanceCheck:
+      environmentEndpoints:
+        "": "https://maintenance-api.example.com/v1/configurations/"
+```
+
+**3. Serve maintenance state** from that endpoint as JSON:
+
+```json
+{ "system_config": { "maintenance": { "is_active": false, "whitelist": [] } } }
+```
+
+With `is_active: false` every request flows through untouched. Flip it to `true`
+and each request receives the maintenance response — except whitelisted IPs and any
+paths or hosts you exempt. See [Configuration](#configuration) for the full option set
+and [Operational notes](#operational-notes) before relying on it in production.
+
+## How it works
+
+A background goroutine polls the maintenance API every `cacheDurationInSeconds` and stores
+the result (status + whitelist) in an in-memory cache. **Requests only ever read that
+cache**, so the API is never on the request path. Each request is then evaluated like this:
+
+```mermaid
+flowchart TD
+    A[Incoming request] --> B{Host or path<br/>in skip rules?}
+    B -- yes --> FWD[Forward to backend]
+    B -- no --> C{Maintenance active?<br/>read from cache}
+    C -- no --> FWD
+    C -- yes --> D{CORS preflight<br/>OPTIONS?}
+    D -- yes --> O{Client IP<br/>whitelisted?}
+    O -- yes --> P204[204 No Content + CORS]
+    O -- no --> P200[200 OK + CORS]
+    D -- no --> E{HTML / static-asset<br/>passthrough allowed?}
+    E -- yes --> FWD
+    E -- no --> F{Client IP<br/>whitelisted?}
+    F -- yes --> FWD
+    F -- no --> M[Maintenance status code<br/>+ CORS headers]
+```
 
 ## Features
 
-- Checks maintenance status from a configurable API endpoint
-- Automatically refreshes maintenance status in the background at configurable intervals
-- Allows specific IP addresses to bypass maintenance mode
-- Supports a wildcard (`*`) for allowing all traffic during maintenance
-- Allows specific URL prefixes to bypass maintenance checks
-- Allows specific hosts to bypass maintenance checks (including wildcard domains)
-- Optional passthrough for base HTML pages during maintenance (keep APIs blocked)
-- Optional passthrough for static assets by extension (js/css/images/fonts)
-- **Full CORS support for preflight and actual requests during maintenance**
-- Configurable request timeout for maintenance status API 
-- Thread-safe implementation with zero impact on request performance
-- Customizable maintenance status code
-- Graceful startup and shutdown handling
-- High performance design with no bottlenecks under load
-- Enhanced client IP detection for Kubernetes and proxy environments
+- Reads maintenance status from a configurable HTTP API endpoint.
+- Refreshes status in the background at a configurable interval — **the request path never
+  calls the API**, so there is no per-request latency.
+- IP whitelist with CIDR ranges and a `*` wildcard to allow all traffic.
+- Per-environment routing: map domain suffixes to different API endpoints, each with its
+  own cached state and secret header.
+- Skip rules: bypass maintenance for specific URL prefixes or hosts (hosts support
+  `*.example.com` wildcards).
+- Optional passthrough of base HTML pages and/or static assets while keeping APIs blocked.
+- CORS support for preflight and blocked responses, with an optional origin allow-list.
+- Configurable maintenance status code and request timeout.
+- Graceful fallback to the last cached value when the API is unavailable.
 
-## CORS Support
+## Installation
 
-The plugin provides comprehensive CORS support to handle modern web applications:
+Register the plugin in Traefik's static configuration:
 
-### CORS Features
-- **Preflight Request Handling**: Properly handles OPTIONS requests with appropriate CORS headers
-- **Origin Validation**: Reflects the requesting origin in `Access-Control-Allow-Origin` header
-- **Credentials Support**: Sets `Access-Control-Allow-Credentials: true` for authenticated requests
-- **Maintenance Mode Integration**: CORS headers are included even when returning maintenance responses
-- **Complete Header Support**: Provides all necessary CORS headers including `Access-Control-Allow-Methods`, `Access-Control-Allow-Headers`, and `Access-Control-Max-Age`
-- **Standard Headers**: Supports common headers like `Accept`, `Authorization`, `Content-Type`, `X-CSRF-Token`
+```yaml
+experimental:
+  plugins:
+    maintenanceCheck:
+      moduleName: github.com/CitronusAcademy/traefik-maintenance-plugin
+      version: "v1.0.0"
+```
 
-### CORS During Maintenance
-When maintenance mode is active:
-1. **Preflight requests (OPTIONS)** receive proper CORS headers and are blocked/allowed based on IP whitelist
-2. **Regular requests** that are blocked due to maintenance receive full CORS headers for proper client handling, including:
-   - `Access-Control-Allow-Origin` (reflects the requesting origin)
-   - `Access-Control-Allow-Methods` (GET, POST, PUT, DELETE, OPTIONS)
-   - `Access-Control-Allow-Headers` (Accept, Authorization, Content-Type, X-CSRF-Token)
-   - `Access-Control-Allow-Credentials` (true)
-   - `Access-Control-Max-Age` (86400)
-3. **Successful requests** (whitelisted IPs) pass through normally with backend CORS handling
+## Configuration
 
-This ensures that frontend applications receive proper CORS responses even during maintenance, preventing browser console errors and enabling graceful degradation of XHR/fetch requests.
-
-## Production Ready
-
-This plugin has been thoroughly tested and is production-ready with:
-- ✅ Comprehensive test coverage including edge cases
-- ✅ CORS functionality fully tested
-- ✅ Error handling and graceful degradation
-- ✅ Performance optimization and zero request overhead
-- ✅ Memory safety and concurrent access protection
-- ✅ Kubernetes and proxy environment support
-
-## Usage
-
-### Configuration
+Middleware (Kubernetes CRD) example:
 
 ```yaml
 apiVersion: traefik.io/v1alpha1
@@ -69,308 +126,159 @@ spec:
   plugin:
     maintenanceCheck:
       environmentEndpoints:
-        ".world": "http://admin-service.stage-admin/admin/api/system-config/?format=json"
-        ".pro": "http://admin-service.develop-admin/admin/api/system-config/?format=json"
-        "": "http://admin-service.admin/admin/api/system-config/?format=json"
+        "": "https://maintenance-api.example.com/v1/configurations/"
       environmentSecrets:
-        ".world":
-          header: "X-Plugin-Secret"
-          value: "stage-secret-token"
-        ".pro":
-          header: "X-Plugin-Secret"
-          value: "develop-secret-token"
         "":
           header: "X-Plugin-Secret"
-          value: "admin-secret-token"
-      cacheDurationInSeconds: 60
+          value: "your-secret-token"
+      cacheDurationInSeconds: 10
       requestTimeoutInSeconds: 5
-      skipPrefixes:      # optional URL prefixes to bypass maintenance checks
-        - /admin
-        - /pgadmin
-      skipHosts:         # optional hostnames to bypass maintenance checks
-        - admin.example.com
-        - monitoring.example.com
-        - *.internal.example.com
-      allowHTMLWhenMaintenance: false # optional: allow HTML pages even in maintenance
-      allowStaticExtensions:    # optional: allow static assets even in maintenance (GET/HEAD only)
+      maintenanceStatusCode: 512
+      skipPrefixes:
+        - "/admin"
+      skipHosts:
+        - "admin.example.com"
+        - "*.internal.example.com"
+      allowHTMLWhenMaintenance: false   # default: true; set false to block HTML pages too
+      allowStaticExtensions:
         - ".js"
         - ".css"
         - ".svg"
         - ".ico"
-      maintenanceStatusCode: 512  # HTTP status code when in maintenance
-      debug: false       # set to true to enable detailed logging
+      allowedOrigins: []   # empty = reflect any Origin; see Operational notes
+      debug: false
 ```
 
-### Helm Configuration Example
+### Environment-based endpoint selection
+
+`environmentEndpoints` maps a domain suffix to a maintenance API endpoint. The plugin picks
+the **longest matching suffix** for the request host; the empty-string key `""` is the
+default fallback. Each suffix gets its own independently-cached maintenance state, so a
+single Traefik instance can serve several environments with separate maintenance switches:
 
 ```yaml
-# values.yaml
-traefik:
-  additionalArguments:
-    - "--experimental.plugins.maintenanceCheck.modulename=github.com/CitronusAcademy/traefik-maintenance-plugin"
-    - "--experimental.plugins.maintenanceCheck.version=v0.1.0"
-
-middleware:
-  maintenance-check:
-    spec:
-      plugin:
-        maintenanceCheck:
-          environmentEndpoints:
-            ".world": "http://admin-service.stage-admin/admin/api/system-config/?format=json"
-            ".pro": "http://admin-service.develop-admin/admin/api/system-config/?format=json"
-            "": "http://admin-service.admin/admin/api/system-config/?format=json"
-          environmentSecrets:
-            ".world":
-              header: "X-Plugin-Secret"
-              value: "stage-secret-token"
-            ".pro":
-              header: "X-Plugin-Secret"
-              value: "develop-secret-token"
-            "":
-              header: "X-Plugin-Secret"
-              value: "admin-secret-token"
-          cacheDurationInSeconds: 60
-          requestTimeoutInSeconds: 5
-          maintenanceStatusCode: 512
-          debug: false
+environmentEndpoints:
+  ".staging": "https://maintenance-staging.example.com/v1/configurations/"
+  ".dev":     "https://maintenance-dev.example.com/v1/configurations/"
+  "":         "https://maintenance-api.example.com/v1/configurations/"
 ```
 
-### Environment-Based Endpoint Selection
+If you only need one environment, configure just the `""` key. When no
+`environmentEndpoints` are supplied at all, the plugin falls back to a single default
+endpoint of `http://maintenance-service/v1/configurations/`, which you will almost always
+want to override.
 
-The plugin automatically selects the appropriate maintenance API endpoint based on the request domain suffix. **Any domain suffix can be configured** - the plugin is not limited to specific domains and works with any configuration you provide.
+## API contract
 
-**Default configuration (can be completely overridden):**
-- **`.com` domains**: `http://admin-service.admin/admin/api/system-config/?format=json` (production)
-- **`.world` domains**: `http://admin-service.stage-admin/admin/api/system-config/?format=json` (staging)
-- **`.pro` domains**: `http://admin-service.develop-admin/admin/api/system-config/?format=json` (development)
-- **Other domains**: `http://admin-service.admin/admin/api/system-config/?format=json` (fallback)
-
-**Production-ready examples:**
-
-```yaml
-# Production configuration with custom domains
-environmentEndpoints:
-  ".com": "https://api.yourcompany.com/admin/api/system-config/?format=json"
-  ".staging": "https://api-staging.yourcompany.com/admin/api/system-config/?format=json"
-  ".dev": "https://api-dev.yourcompany.com/admin/api/system-config/?format=json"
-  "": "https://api.yourcompany.com/admin/api/system-config/?format=json"  # default fallback
-
-# Multiple production environments
-environmentEndpoints:
-  ".com": "https://prod-api.yourcompany.com/admin/api/system-config/?format=json"
-  ".eu": "https://eu-api.yourcompany.com/admin/api/system-config/?format=json"
-  ".asia": "https://asia-api.yourcompany.com/admin/api/system-config/?format=json"
-  "": "https://global-api.yourcompany.com/admin/api/system-config/?format=json"
-
-# Single endpoint for all domains
-environmentEndpoints:
-  "": "https://universal-api.yourcompany.com/admin/api/system-config/?format=json"
-```
-
-**Key features:**
-- ✅ **Supports any domain suffix** (`.com`, `.org`, `.net`, `.local`, `.production`, etc.)
-- ✅ **Configuration overrides defaults** - hardcoded values are only fallbacks
-- ✅ **Production-ready** with proper async handling and no race conditions
-- ✅ **Per-environment secret headers** for secure API access
-- ✅ **Separate maintenance states** per domain suffix
-
-This allows a single Traefik instance to handle multiple environments with completely separate maintenance states and API endpoints.
-
-### API Format
-
-The maintenance API should return a JSON response in the following format:
+The maintenance API must return JSON in this shape:
 
 ```json
 {
   "system_config": {
     "maintenance": {
       "is_active": false,
-      "whitelist": [
-        "192.168.1.1",
-        "10.0.0.5",
-        "172.16.0.0/16"
-      ]
+      "whitelist": ["192.168.1.1", "10.0.0.0/16", "*"]
     }
   }
 }
 ```
 
-When `is_active` is `true`, only IPs in the whitelist will be allowed to access the service. If the whitelist contains `"*"`, all IPs will be allowed.
+When `is_active` is `true`, only clients matching the `whitelist` are allowed through;
+everyone else receives the configured maintenance status code. A `"*"` entry allows all
+clients. Whitelist entries may be exact IPs or CIDR ranges.
 
-## Plugin vs Frontend Access Control
+### Secret-gated whitelist (optional)
 
-If your maintenance API endpoint is also used by frontend applications to check maintenance status, you may want the plugin to receive full information (including IP whitelist) while the frontend receives only basic status information without sensitive data.
-
-To achieve this, configure the `secretHeader` and `secretHeaderValue` parameters:
+If the same API is also called by a frontend to display a maintenance banner, you may want
+the frontend to see only `is_active` while the plugin additionally receives the `whitelist`.
+Configure a secret header and have the API return the `whitelist` only when it is present
+and matches:
 
 ```yaml
 secretHeader: "X-Plugin-Secret"
-secretHeaderValue: "your-secret-token-here"
+secretHeaderValue: "your-secret-token"
 ```
 
-When configured, the plugin will send this header with all requests to your maintenance API. Your server can then:
+Per-environment secrets via `environmentSecrets` take precedence; the top-level
+`secretHeader`/`secretHeaderValue` is the fallback when an environment has no secret value.
 
-1. **For requests WITH the secret header**: Return full response including IP whitelist for the plugin
-2. **For requests WITHOUT the secret header**: Return only basic info for frontend
+## Client IP detection
 
-Example server logic:
-```python
-def get_maintenance_status(request):
-    is_plugin_request = request.headers.get('X-Plugin-Secret') == 'your-secret-token-here'
-    
-    if is_plugin_request:
-        # Return full info for plugin
-        return {
-            "system_config": {
-                "maintenance": {
-                    "is_active": True,
-                    "whitelist": ["192.168.1.1", "10.0.0.0/8"]  # Include IPs
-                }
-            }
-        }
-    else:
-        # Return basic info for frontend
-        return {
-            "system_config": {
-                "maintenance": {
-                    "is_active": True
-                    # No whitelist for frontend
-                }
-            }
-        }
-```
+The plugin determines the client IP from the **`Cf-Connecting-Ip` header only**. This is
+intended for deployments behind Cloudflare, where that header is injected by the edge.
+There is no `X-Forwarded-For` / `RemoteAddr` fallback.
 
-**Security Note**: Keep the secret token secure and use HTTPS for your maintenance API endpoint to prevent token interception.
-
-## Local Testing
-
-This plugin is integrated with the Kubernetes infrastructure in this repository. To test it locally:
-
-1. Run the `plugins/setup-maintenance-plugin.sh` script to set up a Kind cluster with the plugin mounted.
-2. Use the `curl` command to test the plugin with different maintenance configurations.
-
-## Integration with Kubernetes Infrastructure
-
-This plugin is part of the Kubernetes infrastructure in this repository. It is loaded locally by Traefik when deployed using the Helm chart.
-
-## Configuration
-
-### Static Configuration
-
-```yaml
-experimental:
-  plugins:
-    maintenance:
-      moduleName: "github.com/CitronusAcademy/traefik-maintenance-plugin"
-      version: "v0.1.0"
-```
-
-### Dynamic Configuration
-
-```yaml
-http:
-  middlewares:
-    maintenance-check:
-      plugin:
-        maintenance:
-          environmentEndpoints:
-            ".world": "http://admin-service.stage-admin/admin/api/system-config/?format=json"
-            ".pro": "http://admin-service.develop-admin/admin/api/system-config/?format=json"
-            "": "http://admin-service.admin/admin/api/system-config/?format=json"
-          environmentSecrets:
-            ".world":
-              header: "X-Plugin-Secret"
-              value: "stage-secret-token"
-            ".pro":
-              header: "X-Plugin-Secret"
-              value: "develop-secret-token"
-            "":
-              header: "X-Plugin-Secret"
-              value: "admin-secret-token"
-          cacheDurationInSeconds: 10
-          requestTimeoutInSeconds: 5
-          skipPrefixes:
-            - "/admin"
-            - "/pgadmin"
-          skipHosts:
-            - "pgadmin.example.com"
-            - "grafana.example.com"
-            - "*.internal.example.com"
-          maintenanceStatusCode: 512
-          debug: false
-```
-
-## Endpoint Format
-
-The plugin automatically queries different maintenance status endpoints based on the request domain and expects a JSON response in the following format:
-
-```json
-{
-  "system_config": {
-    "maintenance": {
-      "is_active": false,
-      "whitelist": [
-        "192.168.1.1",
-        "10.0.0.5",
-        "172.16.0.0/16"
-      ]
-    }
-  }
-}
-```
-
-When `maintenance.is_active` is `true`, the middleware will check the whitelist:
-
-1. If the whitelist contains `"*"`, all users will be allowed to access the service.
-2. If the client's IP address matches any entry in the whitelist, they will be allowed through.
-3. CIDR notation (like `192.168.0.0/24`) is supported for allowing entire IP ranges.
-4. Otherwise, the configured maintenance status code (default: 512) with the message "Service is in maintenance mode" will be returned.
-
-The plugin extracts client IPs by checking headers in the following order:
-1. Cf-Connecting-Ip (CloudFlare)
-2. True-Client-Ip (Akamai/Cloudflare)
-3. X-Forwarded-For (standard proxy header, first IP if multiple are present)
-4. X-Real-Ip (Nginx)
-5. X-Client-Ip (Common)
-6. Forwarded (RFC 7239 standard)
-7. X-Original-Forwarded-For (Traefik specific)
-8. Request's RemoteAddr (as last resort)
-
-This extensive header checking ensures the plugin works correctly in complex proxy environments like Kubernetes.
+**Consequence:** if a request reaches the plugin without a `Cf-Connecting-Ip` header, the
+plugin resolves no client IP, so whitelisting cannot match and the client is **blocked**
+while maintenance is active. Ensure every path that needs whitelisting actually carries
+that header before it reaches Traefik.
 
 ## Parameters
 
-- `environmentEndpoints` (optional): Map of domain suffixes to maintenance API endpoints. Default includes `.world`, `.pro`, and fallback endpoints.
-- `environmentSecrets` (optional): Map of domain suffixes to secret headers for each environment. Each entry contains `header` and `value` fields.
-- `cacheDurationInSeconds` (optional): How often the background process refreshes maintenance status, specified in seconds. Default is 10.
-- `requestTimeoutInSeconds` (optional): Timeout for API requests in seconds. Default is 5.
-- `skipPrefixes` (optional): List of URL path prefixes that should bypass maintenance checks, useful for admin interfaces. Default is empty list.
-- `maintenanceStatusCode` (optional): HTTP status code to return when in maintenance mode. Default is 512 (Service Unavailable).
-- `skipHosts` (optional): List of hostnames that should bypass maintenance checks, useful for admin interfaces, monitoring tools, etc. Supports wildcard patterns like "*.example.com". Default is empty list.
-- `allowHTMLWhenMaintenance` (optional): When true, GET/HEAD requests that explicitly accept `text/html` are allowed even during maintenance. API calls (typically `application/json`) remain blocked unless the IP is whitelisted.
-- `allowStaticExtensions` (optional): List of file extensions (case-insensitive) to allow during maintenance for GET/HEAD requests (e.g., `[".js", ".css", ".svg", ".ico", ".png", ".jpg", ".woff", ".woff2", ".ttf", ".map"]`). Useful for letting static FE assets load while blocking APIs.
-- `debug` (optional): Enable debug logging for troubleshooting. Default is false. When enabled, detailed information about decision making will be logged to stdout.
-- `secretHeader` (optional): Legacy fallback secret header name. Use `environmentSecrets` for per-environment configuration.
-- `secretHeaderValue` (optional): Legacy fallback secret header value. Use `environmentSecrets` for per-environment configuration.
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `environmentEndpoints` | `{"": "http://maintenance-service/v1/configurations/"}` | Map of domain suffix → API endpoint. Longest-suffix match wins; `""` is the fallback. |
+| `environmentSecrets` | `{"": {X-Plugin-Secret, ""}}` | Map of domain suffix → `{header, value}` secret sent to that environment's API. |
+| `cacheDurationInSeconds` | `10` | Background poll interval. **Not** a per-request cache. |
+| `requestTimeoutInSeconds` | `5` | Timeout for each maintenance API request. |
+| `maintenanceStatusCode` | `512` | HTTP status returned to blocked clients during maintenance. |
+| `skipPrefixes` | `[]` | URL path prefixes that always bypass maintenance. |
+| `skipHosts` | `[]` | Hostnames that always bypass maintenance; supports `*.example.com`. |
+| `allowHTMLWhenMaintenance` | `true` | Allow GET/HEAD requests that accept `text/html` (lets a status page load while APIs stay blocked). |
+| `allowStaticExtensions` | common web asset extensions | File extensions allowed for GET/HEAD during maintenance. |
+| `allowedOrigins` | `[]` | CORS origin allow-list. Empty reflects any `Origin` (without credentials); non-empty reflects only listed origins and sends `Access-Control-Allow-Credentials: true` for them. |
+| `corsAllowAnyOrigin` | `true` | When `allowedOrigins` is empty, reflect any `Origin` (default). Set `false` to send no CORS `Access-Control-Allow-Origin` unless the request's `Origin` matches `allowedOrigins`. |
+| `trustedProxies` | `[]` | CIDR ranges for trusted immediate peers. When set, `Cf-Connecting-Ip` is only honored if the request's direct peer (`RemoteAddr`) falls in one of these ranges; otherwise no client IP is resolved (blocked during maintenance). Empty = trust the header unconditionally. |
+| `strictAssetMatching` | `false` | When `true`, match `allowStaticExtensions` against the URL's real file extension (`path.Ext`), so paths like `/data.json/x` are not treated as static assets. |
+| `secretHeader` / `secretHeaderValue` | `X-Plugin-Secret` / `""` | Fallback secret header used when an environment has no per-environment secret. |
+| `debug` | `false` | Verbose stdout logging. See the warning in Operational notes. |
 
-## Production Readiness Features
+## Operational notes
 
-- **Background refreshing**: Maintenance status is checked in a background process at regular intervals, completely separate from the request path
-- **Zero request overhead**: User requests never trigger maintenance API calls, resulting in consistent performance under any load level
-- **Error resilience**: If the maintenance API is unavailable or returns errors, the plugin gracefully falls back to cached values
-- **Graceful shutdown**: Properly handles Traefik restart/reload without leaking resources
-- **Optimized concurrency**: Read-optimized locking strategy for maximum throughput
-- **Immediate startup**: Synchronous initial check ensures the plugin is ready to serve requests as soon as it starts
-- **HTTP transport tuning**: Optimized HTTP client with connection pooling and proper timeouts
-- **Clean failure modes**: Safe defaults in case of any failures
+These are the non-obvious behaviors worth knowing before relying on the plugin.
 
-## Installation
+- **Secret mismatch blocks everyone.** If the API gates the `whitelist` behind the secret
+  (see above) and the plugin's configured secret does not match what the API expects, the
+  response carries `is_active` with **no `whitelist`** — so during maintenance *every*
+  client, including operators you meant to allow, is blocked. If "the whitelist isn't
+  working," verify the plugin's effective secret matches the API's expected value first.
 
-Add the plugin to `traefik_values.yaml`:
-```yaml
-experimental:
-  plugins:
-    maintenanceCheck:
-      moduleName: github.com/CitronusAcademy/traefik-maintenance-plugin
-      version: "v0.1.0"
+- **The cache is per Traefik replica.** Each replica polls and converges independently. With
+  more than one replica, immediately after a whitelist/maintenance change a load-balanced
+  client can be routed to a replica that hasn't refreshed yet, so the maintenance response
+  can flicker for up to one `cacheDurationInSeconds` window. Single-replica deployments do
+  not see this.
+
+- **`debug: true` logs request headers to stdout.** Sensitive headers —
+  `Authorization`, `Cookie`, `Set-Cookie`, `Proxy-Authorization`, and every
+  configured secret header — are redacted to `[REDACTED]`; all other headers are
+  logged verbatim. Still keep it off in any shared or production environment.
+
+- **CORS credentials require an explicit origin allow-list.** With `allowedOrigins`
+  empty, the plugin reflects whatever `Origin` the request sent but does **not** send
+  `Access-Control-Allow-Credentials` — reflecting an arbitrary origin together with
+  credentials is the insecure CORS combination. Only origins you list explicitly in
+  `allowedOrigins` receive `Access-Control-Allow-Credentials: true`.
+
+- **Fail-open on API errors.** If the API is unreachable or returns an error, the plugin
+  keeps serving the last cached state and retries with exponential backoff. On a cold start
+  where the very first fetch fails, no prior state exists and the plugin treats maintenance
+  as inactive (allows traffic) until a fetch succeeds.
+
+## Development
+
+```bash
+go build ./...
+go test ./...
+go test -race ./...        # race detector
+go test -cover ./...       # statement coverage (also reported to Codecov in CI)
+go vet ./...
+gofmt -l .
 ```
+
+The plugin has **no external dependencies** — it uses only the Go standard library, which
+keeps it compatible with Traefik's Yaegi interpreter.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

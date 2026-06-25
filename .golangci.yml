@@ -1,0 +1,20 @@
+version: "2"
+
+run:
+  timeout: 3m
+
+linters:
+  settings:
+    errcheck:
+      # Diagnostic output goes to the package log writer (logOut) on a
+      # best-effort basis; a failed write must never affect request handling,
+      # so these returns are intentionally unchecked.
+      exclude-functions:
+        - fmt.Fprintf
+  exclusions:
+    rules:
+      # Test helpers ignore best-effort errors (response body Close, JSON
+      # encode to an httptest recorder) by design.
+      - path: _test\.go
+        linters:
+          - errcheck
