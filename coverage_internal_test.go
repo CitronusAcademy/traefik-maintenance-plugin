@@ -1,11 +1,15 @@
 package traefik_maintenance_plugin
 
 import (
+	"bytes"
 	"context"
 	"net/http"
 	"net/http/httptest"
 	"runtime"
+	"strings"
 	"testing"
+
+	"github.com/CitronusAcademy/traefik-maintenance-plugin/internal/logx"
 )
 
 func TestNewDoesNotLeakGoroutinePerInstance(t *testing.T) {
@@ -44,13 +48,45 @@ func TestNewDoesNotLeakGoroutinePerInstance(t *testing.T) {
 }
 
 func TestLogRequestHeadersForDebugging(t *testing.T) {
-	// debug on: exercises the logging branch (output goes to stdout; we only
-	// assert it does not panic and the debug-off early return is also covered).
-	on := &MaintenanceCheck{debug: true}
+	orig := logx.Out
+	defer func() { logx.Out = orig }()
+	var buf bytes.Buffer
+	logx.Out = &buf
+
+	on := &MaintenanceCheck{
+		debug: true,
+		sensitiveHeaders: map[string]struct{}{
+			"Authorization":   {},
+			"Cookie":          {},
+			"X-Plugin-Secret": {},
+		},
+	}
 	req, _ := http.NewRequest(http.MethodGet, "http://example.com/", nil)
-	req.Header.Set("Authorization", "Bearer x")
+	req.Header.Set("Authorization", "Bearer supersecret")
+	req.Header.Set("Cookie", "session=abc123")
+	req.Header.Set("X-Plugin-Secret", "topsecret")
+	req.Header.Set("X-Request-Id", "req-123")
 	on.logRequestHeadersForDebugging(req)
 
+	out := buf.String()
+	for _, leaked := range []string{"Bearer supersecret", "session=abc123", "topsecret"} {
+		if strings.Contains(out, leaked) {
+			t.Errorf("sensitive value leaked into debug log: %q\noutput:\n%s", leaked, out)
+		}
+	}
+	if !strings.Contains(out, "[REDACTED]") {
+		t.Errorf("expected [REDACTED] placeholder in debug log, got:\n%s", out)
+	}
+	// Non-sensitive header value is preserved verbatim.
+	if !strings.Contains(out, "req-123") {
+		t.Errorf("non-sensitive header value should be logged verbatim, got:\n%s", out)
+	}
+
+	// debug off → no output at all.
+	buf.Reset()
 	off := &MaintenanceCheck{debug: false}
 	off.logRequestHeadersForDebugging(req)
+	if buf.Len() != 0 {
+		t.Errorf("debug off must produce no output, got %q", buf.String())
+	}
 }

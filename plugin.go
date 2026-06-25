@@ -27,6 +27,7 @@ type MaintenanceCheck struct {
 	corsAllowAnyOrigin    bool
 	trustedProxies        []*net.IPNet
 	strictAssetMatching   bool
+	sensitiveHeaders      map[string]struct{}
 }
 
 func New(_ context.Context, next http.Handler, config *Config, name string) (http.Handler, error) {
@@ -79,6 +80,25 @@ func New(_ context.Context, next http.Handler, config *Config, name string) (htt
 	allowedOriginsCopy := make([]string, len(config.AllowedOrigins))
 	copy(allowedOriginsCopy, config.AllowedOrigins)
 
+	// Header names whose values must never reach debug logs. Covers the standard
+	// credential-bearing headers plus every configured secret header (top-level
+	// and per-environment), so the plugin's own auth secret is redacted too.
+	sensitiveHeaders := map[string]struct{}{
+		"Authorization":       {},
+		"Cookie":              {},
+		"Set-Cookie":          {},
+		"Proxy-Authorization": {},
+		"X-Plugin-Secret":     {},
+	}
+	if config.SecretHeader != "" {
+		sensitiveHeaders[http.CanonicalHeaderKey(config.SecretHeader)] = struct{}{}
+	}
+	for _, s := range config.EnvironmentSecrets {
+		if s.Header != "" {
+			sensitiveHeaders[http.CanonicalHeaderKey(s.Header)] = struct{}{}
+		}
+	}
+
 	// Parse trustedProxies into CIDRs once. A bare IP becomes a host route
 	// (/32 or /128). When the set is empty, Cf-Connecting-Ip is trusted
 	// unconditionally (today's default behavior).
@@ -116,6 +136,7 @@ func New(_ context.Context, next http.Handler, config *Config, name string) (htt
 		corsAllowAnyOrigin:    config.CorsAllowAnyOrigin,
 		trustedProxies:        trustedProxies,
 		strictAssetMatching:   config.StrictAssetMatching,
+		sensitiveHeaders:      sensitiveHeaders,
 	}
 
 	return m, nil
@@ -128,7 +149,11 @@ func (m *MaintenanceCheck) logRequestHeadersForDebugging(req *http.Request) {
 
 	fmt.Fprintf(logx.Out, "[MaintenanceCheck] Request headers for diagnostics:\n")
 	for headerName, headerValues := range req.Header {
-		fmt.Fprintf(logx.Out, "[MaintenanceCheck]   %s: %s\n", headerName, strings.Join(headerValues, ", "))
+		value := strings.Join(headerValues, ", ")
+		if _, sensitive := m.sensitiveHeaders[http.CanonicalHeaderKey(headerName)]; sensitive {
+			value = "[REDACTED]"
+		}
+		fmt.Fprintf(logx.Out, "[MaintenanceCheck]   %s: %s\n", headerName, value)
 	}
 
 	fmt.Fprintf(logx.Out, "[MaintenanceCheck] Using only Cf-Connecting-Ip header for IP detection (supports single value or CSV)\n")
