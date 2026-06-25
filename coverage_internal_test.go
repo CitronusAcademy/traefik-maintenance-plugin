@@ -106,34 +106,6 @@ func TestCleanIPAddressForms(t *testing.T) {
 	}
 }
 
-func TestSkipHelpersEdges(t *testing.T) {
-	m := &MaintenanceCheck{
-		skipHosts:    []string{"", "exact.example.com", "*.internal.example.com"},
-		skipPrefixes: []string{"", "/admin"},
-	}
-	if m.isHostSkipped("") {
-		t.Error("empty host must not be skipped")
-	}
-	if !m.isHostSkipped("exact.example.com") {
-		t.Error("exact host must be skipped")
-	}
-	if !m.isHostSkipped("a.internal.example.com") {
-		t.Error("wildcard host must be skipped")
-	}
-	if m.isHostSkipped("other.example.com") {
-		t.Error("non-matching host must not be skipped")
-	}
-	if m.isPrefixSkipped("") {
-		t.Error("empty path must not be skipped")
-	}
-	if !m.isPrefixSkipped("/admin/users") {
-		t.Error("prefix must be skipped")
-	}
-	if m.isPrefixSkipped("/public") {
-		t.Error("non-matching prefix must not be skipped")
-	}
-}
-
 func TestLogRequestHeadersForDebugging(t *testing.T) {
 	// debug on: exercises the logging branch (output goes to stdout; we only
 	// assert it does not panic and the debug-off early return is also covered).

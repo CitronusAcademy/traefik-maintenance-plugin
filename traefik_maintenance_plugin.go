@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/CitronusAcademy/traefik-maintenance-plugin/internal/logx"
+	"github.com/CitronusAcademy/traefik-maintenance-plugin/internal/skip"
 )
 
 type MaintenanceCheck struct {
@@ -112,6 +113,19 @@ func New(_ context.Context, next http.Handler, config *Config, name string) (htt
 	return m, nil
 }
 
+func (m *MaintenanceCheck) logRequestHeadersForDebugging(req *http.Request) {
+	if !m.debug {
+		return
+	}
+
+	fmt.Fprintf(logx.Out, "[MaintenanceCheck] Request headers for diagnostics:\n")
+	for headerName, headerValues := range req.Header {
+		fmt.Fprintf(logx.Out, "[MaintenanceCheck]   %s: %s\n", headerName, strings.Join(headerValues, ", "))
+	}
+
+	fmt.Fprintf(logx.Out, "[MaintenanceCheck] Using only Cf-Connecting-Ip header for IP detection (supports single value or CSV)\n")
+}
+
 func (m *MaintenanceCheck) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	if req == nil {
 		http.Error(rw, "Bad Request: nil request received", http.StatusBadRequest)
@@ -120,13 +134,13 @@ func (m *MaintenanceCheck) ServeHTTP(rw http.ResponseWriter, req *http.Request) 
 
 	m.logRequestHeadersForDebugging(req)
 
-	normalizedHost := m.extractHostWithoutPort(req.Host)
+	normalizedHost := skip.HostWithoutPort(req.Host, m.debug)
 
 	if m.debug {
 		fmt.Fprintf(logx.Out, "[MaintenanceCheck] Evaluating request: host=%s, path=%s\n", normalizedHost, req.URL.Path)
 	}
 
-	if m.isHostSkipped(normalizedHost) {
+	if skip.HostSkipped(normalizedHost, m.skipHosts, m.debug) {
 		if m.debug {
 			fmt.Fprintf(logx.Out, "[MaintenanceCheck] Host '%s' is in skip list, bypassing maintenance check\n", normalizedHost)
 		}
@@ -134,7 +148,7 @@ func (m *MaintenanceCheck) ServeHTTP(rw http.ResponseWriter, req *http.Request) 
 		return
 	}
 
-	if m.isPrefixSkipped(req.URL.Path) {
+	if skip.PrefixSkipped(req.URL.Path, m.skipPrefixes, m.debug) {
 		if m.debug {
 			fmt.Fprintf(logx.Out, "[MaintenanceCheck] Path '%s' matches skip prefix, bypassing maintenance check\n", req.URL.Path)
 		}
@@ -152,7 +166,7 @@ func (m *MaintenanceCheck) ServeHTTP(rw http.ResponseWriter, req *http.Request) 
 	}
 
 	if isActive {
-		if m.allowHTML && isHTMLRequest(req) {
+		if m.allowHTML && skip.IsHTMLRequest(req) {
 			if m.debug {
 				fmt.Fprintf(logx.Out, "[MaintenanceCheck] Maintenance active but request accepts HTML, bypassing maintenance check\n")
 			}
@@ -160,7 +174,7 @@ func (m *MaintenanceCheck) ServeHTTP(rw http.ResponseWriter, req *http.Request) 
 			return
 		}
 
-		if isStaticAssetRequest(req, m.allowStaticExts, m.strictAssetMatching) {
+		if skip.IsStaticAsset(req, m.allowStaticExts, m.strictAssetMatching) {
 			if m.debug {
 				fmt.Fprintf(logx.Out, "[MaintenanceCheck] Maintenance active but path '%s' matches allowed static extensions, bypassing maintenance check\n", req.URL.Path)
 			}

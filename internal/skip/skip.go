@@ -1,4 +1,7 @@
-package traefik_maintenance_plugin
+// Package skip holds the request-bypass predicates: host/prefix skip rules and
+// the HTML / static-asset passthrough checks. They are pure functions over the
+// request and the configured rule lists; diagnostics go to logx.Out.
+package skip
 
 import (
 	"fmt"
@@ -10,20 +13,9 @@ import (
 	"github.com/CitronusAcademy/traefik-maintenance-plugin/internal/logx"
 )
 
-func (m *MaintenanceCheck) logRequestHeadersForDebugging(req *http.Request) {
-	if !m.debug {
-		return
-	}
-
-	fmt.Fprintf(logx.Out, "[MaintenanceCheck] Request headers for diagnostics:\n")
-	for headerName, headerValues := range req.Header {
-		fmt.Fprintf(logx.Out, "[MaintenanceCheck]   %s: %s\n", headerName, strings.Join(headerValues, ", "))
-	}
-
-	fmt.Fprintf(logx.Out, "[MaintenanceCheck] Using only Cf-Connecting-Ip header for IP detection (supports single value or CSV)\n")
-}
-
-func (m *MaintenanceCheck) extractHostWithoutPort(originalHost string) string {
+// HostWithoutPort normalizes originalHost to a bare host, stripping any port and
+// IPv6 brackets while leaving a bare IPv6 address intact.
+func HostWithoutPort(originalHost string, debug bool) string {
 	if originalHost == "" {
 		return ""
 	}
@@ -42,16 +34,16 @@ func (m *MaintenanceCheck) extractHostWithoutPort(originalHost string) string {
 	// SplitHostPort errors and we keep the original — splitting on ':' here
 	// would corrupt a bare IPv6 address.
 
-	if m.debug && host != originalHost {
+	if debug && host != originalHost {
 		fmt.Fprintf(logx.Out, "[MaintenanceCheck] Normalized host from '%s' to '%s'\n", originalHost, host)
 	}
 	return host
 }
 
-// isHTMLRequest returns true when the request explicitly accepts HTML content.
+// IsHTMLRequest returns true when the request explicitly accepts HTML content.
 // This is used to optionally let base web pages through during maintenance,
 // while keeping API calls (typically JSON) blocked.
-func isHTMLRequest(req *http.Request) bool {
+func IsHTMLRequest(req *http.Request) bool {
 	if req == nil {
 		return false
 	}
@@ -75,18 +67,18 @@ func isHTMLRequest(req *http.Request) bool {
 	return false
 }
 
-// isStaticAssetRequest returns true for GET/HEAD requests whose URL path ends
-// with one of the configured static extensions (case-insensitive). This is
-// used to optionally let static assets (JS/CSS/images/fonts, etc.) through
-// during maintenance without whitelisting. The extensions are already
-// normalized (lowercased, trimmed, no empties) at construction time.
+// IsStaticAsset returns true for GET/HEAD requests whose URL path ends with one
+// of the configured static extensions (case-insensitive). This is used to
+// optionally let static assets (JS/CSS/images/fonts, etc.) through during
+// maintenance without whitelisting. The extensions are already normalized
+// (lowercased, trimmed, no empties) at construction time.
 //
 // When strict is false (the default) the whole path is suffix-matched, so any
 // path crafted to end in an allowed extension (e.g. "/api/export.css") is let
 // through. When strict is true only a genuine file extension on the last path
 // segment is matched (via path.Ext), closing that bypass at the cost of also
 // requiring real asset paths to carry their extension on the final segment.
-func isStaticAssetRequest(req *http.Request, extensions []string, strict bool) bool {
+func IsStaticAsset(req *http.Request, extensions []string, strict bool) bool {
 	if req == nil {
 		return false
 	}
@@ -123,17 +115,19 @@ func isStaticAssetRequest(req *http.Request, extensions []string, strict bool) b
 	return false
 }
 
-func (m *MaintenanceCheck) isHostSkipped(host string) bool {
+// HostSkipped reports whether host matches any entry in skipHosts. Entries
+// beginning with "*." match by domain suffix; all others match exactly.
+func HostSkipped(host string, skipHosts []string, debug bool) bool {
 	// Guard against empty hosts
 	if host == "" {
 		return false
 	}
 
-	if m.debug {
-		fmt.Fprintf(logx.Out, "[MaintenanceCheck] Checking host '%s' against skipHosts: %v\n", host, m.skipHosts)
+	if debug {
+		fmt.Fprintf(logx.Out, "[MaintenanceCheck] Checking host '%s' against skipHosts: %v\n", host, skipHosts)
 	}
 
-	for _, skipHost := range m.skipHosts {
+	for _, skipHost := range skipHosts {
 		// Skip empty entries
 		if skipHost == "" {
 			continue
@@ -143,13 +137,13 @@ func (m *MaintenanceCheck) isHostSkipped(host string) bool {
 		if strings.HasPrefix(skipHost, "*.") {
 			suffix := skipHost[1:] // ".example.com"
 			if strings.HasSuffix(host, suffix) {
-				if m.debug {
+				if debug {
 					fmt.Fprintf(logx.Out, "[MaintenanceCheck] Host '%s' matches wildcard pattern '%s'\n", host, skipHost)
 				}
 				return true
 			}
 		} else if skipHost == host {
-			if m.debug {
+			if debug {
 				fmt.Fprintf(logx.Out, "[MaintenanceCheck] Host '%s' matches exact host '%s'\n", host, skipHost)
 			}
 			return true
@@ -159,24 +153,25 @@ func (m *MaintenanceCheck) isHostSkipped(host string) bool {
 	return false
 }
 
-func (m *MaintenanceCheck) isPrefixSkipped(path string) bool {
+// PrefixSkipped reports whether path begins with any non-empty entry in prefixes.
+func PrefixSkipped(path string, prefixes []string, debug bool) bool {
 	// Guard against nil path
 	if path == "" {
 		return false
 	}
 
-	if m.debug {
-		fmt.Fprintf(logx.Out, "[MaintenanceCheck] Checking path '%s' against skipPrefixes: %v\n", path, m.skipPrefixes)
+	if debug {
+		fmt.Fprintf(logx.Out, "[MaintenanceCheck] Checking path '%s' against skipPrefixes: %v\n", path, prefixes)
 	}
 
-	for _, prefix := range m.skipPrefixes {
+	for _, prefix := range prefixes {
 		// Skip empty prefixes
 		if prefix == "" {
 			continue
 		}
 
 		if strings.HasPrefix(path, prefix) {
-			if m.debug {
+			if debug {
 				fmt.Fprintf(logx.Out, "[MaintenanceCheck] Path '%s' matches prefix '%s'\n", path, prefix)
 			}
 			return true
