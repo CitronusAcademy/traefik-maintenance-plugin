@@ -4,8 +4,19 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"time"
 )
+
+// runningUnderYaegi reports whether the test is executing under the Yaegi
+// interpreter (Traefik's plugin runtime) rather than a compiled `go test`
+// binary. Under Yaegi os.Args[0] is empty; a compiled test binary's Args[0] is
+// its path. Tests that exercise compiled-to-interpreted callback boundaries —
+// which deadlock under Yaegi — skip themselves when this returns true. (Yaegi
+// 0.16.1 ignores //go:build constraints, so a runtime guard is required.)
+func runningUnderYaegi() bool {
+	return len(os.Args) == 0 || os.Args[0] == ""
+}
 
 type maintenanceResponse struct {
 	SystemConfig struct {

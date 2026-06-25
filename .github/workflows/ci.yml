@@ -60,6 +60,11 @@ jobs:
         run: curl -sfL https://raw.githubusercontent.com/traefik/yaegi/master/install.sh | bash -s -- -b "$(go env GOPATH)/bin" "${YAEGI_VERSION}"
       - name: Yaegi test
         working-directory: go/src/github.com/${{ github.repository }}
+        # Tests that exercise compiled-to-interpreted callback boundaries (e.g.
+        # http.Server.ConnState) deadlock under the interpreter, so they skip
+        # themselves at runtime via runningUnderYaegi(); they run under the
+        # regular `go test` job instead. (Yaegi ignores //go:build tags, so the
+        # skip must be a runtime guard rather than a build constraint.)
         run: "$(go env GOPATH)/bin/yaegi test -v ."
 
   lint:
