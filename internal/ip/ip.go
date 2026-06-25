@@ -1,4 +1,7 @@
-package traefik_maintenance_plugin
+// Package ip resolves the client IP from the Cf-Connecting-Ip header and
+// matches it against a maintenance whitelist (exact, CIDR, or wildcard),
+// optionally gated by a set of trusted proxy networks.
+package ip
 
 import (
 	"fmt"
@@ -8,6 +11,87 @@ import (
 
 	"github.com/CitronusAcademy/traefik-maintenance-plugin/internal/logx"
 )
+
+// IsClientAllowed reports whether the request's client IP (from Cf-Connecting-Ip)
+// satisfies the whitelist. When trustedProxies is non-empty, the header is only
+// honored if the request's immediate peer is within one of those networks;
+// otherwise the spoofable header is ignored and the request is blocked.
+func IsClientAllowed(req *http.Request, whitelist []string, trustedProxies []*net.IPNet, debug bool) bool {
+	// Guard against nil request or whitelist
+	if req == nil {
+		return false
+	}
+
+	if len(whitelist) == 0 {
+		if debug {
+			fmt.Fprintf(logx.Out, "[MaintenanceCheck] Whitelist is empty, blocking request\n")
+		}
+		return false
+	}
+
+	// Extended debug info for whitelist
+	if debug {
+		fmt.Fprintf(logx.Out, "[MaintenanceCheck] Maintenance whitelist entries: %d items\n", len(whitelist))
+		for i, entry := range whitelist {
+			fmt.Fprintf(logx.Out, "[MaintenanceCheck]   Whitelist[%d]: %s\n", i, entry)
+		}
+	}
+
+	// Check for wildcard first
+	for _, entry := range whitelist {
+		if entry == "*" {
+			if debug {
+				fmt.Fprintf(logx.Out, "[MaintenanceCheck] Wildcard (*) found in whitelist, allowing request\n")
+			}
+			return true
+		}
+	}
+
+	// When trustedProxies is configured, only honor Cf-Connecting-Ip if the
+	// request's immediate peer is a trusted hop; otherwise the header is
+	// spoofable and we resolve no client IP (block during maintenance).
+	if !remoteAddrTrusted(req, trustedProxies) {
+		if debug {
+			fmt.Fprintf(logx.Out, "[MaintenanceCheck] Request peer %s is not a trusted proxy; ignoring Cf-Connecting-Ip\n", req.RemoteAddr)
+		}
+		return false
+	}
+
+	// Get ALL client IPs from all headers
+	clientIPs := getAllClientIPs(req, debug)
+
+	// No IPs found at all
+	if len(clientIPs) == 0 {
+		if debug {
+			fmt.Fprintf(logx.Out, "[MaintenanceCheck] Could not determine any client IPs, blocking request\n")
+		}
+		return false
+	}
+
+	if debug {
+		fmt.Fprintf(logx.Out, "[MaintenanceCheck] Client IPs for whitelist check: %v\n", clientIPs)
+		fmt.Fprintf(logx.Out, "[MaintenanceCheck] Beginning whitelist evaluation for %d IPs\n", len(clientIPs))
+	}
+
+	// Check each client IP against the whitelist
+	// If ANY IP matches, allow the request
+	for _, clientIP := range clientIPs {
+		if clientIP == "" {
+			continue
+		}
+
+		for _, whitelistEntry := range whitelist {
+			if matchWhitelistEntry(clientIP, whitelistEntry, debug) {
+				return true
+			}
+		}
+	}
+
+	if debug {
+		fmt.Fprintf(logx.Out, "[MaintenanceCheck] None of the client IPs %v matched whitelist, blocking request\n", clientIPs)
+	}
+	return false
+}
 
 // getAllClientIPs extracts all IP addresses from Cf-Connecting-Ip header only
 // Returns a slice of unique IPs found in the header (supports single value or CSV)
@@ -90,8 +174,8 @@ func cleanIPAddress(ip string) string {
 // remoteAddrTrusted reports whether the request's immediate peer is within the
 // configured trustedProxies set. When no proxies are configured it returns true
 // (Cf-Connecting-Ip is trusted unconditionally — the default).
-func (m *MaintenanceCheck) remoteAddrTrusted(req *http.Request) bool {
-	if len(m.trustedProxies) == 0 {
+func remoteAddrTrusted(req *http.Request, trustedProxies []*net.IPNet) bool {
+	if len(trustedProxies) == 0 {
 		return true
 	}
 	host := req.RemoteAddr
@@ -102,87 +186,10 @@ func (m *MaintenanceCheck) remoteAddrTrusted(req *http.Request) bool {
 	if ip == nil {
 		return false
 	}
-	for _, cidr := range m.trustedProxies {
+	for _, cidr := range trustedProxies {
 		if cidr.Contains(ip) {
 			return true
 		}
-	}
-	return false
-}
-
-func (m *MaintenanceCheck) isClientAllowed(req *http.Request, whitelist []string) bool {
-	// Guard against nil request or whitelist
-	if req == nil {
-		return false
-	}
-
-	if len(whitelist) == 0 {
-		if m.debug {
-			fmt.Fprintf(logx.Out, "[MaintenanceCheck] Whitelist is empty, blocking request\n")
-		}
-		return false
-	}
-
-	// Extended debug info for whitelist
-	if m.debug {
-		fmt.Fprintf(logx.Out, "[MaintenanceCheck] Maintenance whitelist entries: %d items\n", len(whitelist))
-		for i, entry := range whitelist {
-			fmt.Fprintf(logx.Out, "[MaintenanceCheck]   Whitelist[%d]: %s\n", i, entry)
-		}
-	}
-
-	// Check for wildcard first
-	for _, entry := range whitelist {
-		if entry == "*" {
-			if m.debug {
-				fmt.Fprintf(logx.Out, "[MaintenanceCheck] Wildcard (*) found in whitelist, allowing request\n")
-			}
-			return true
-		}
-	}
-
-	// When trustedProxies is configured, only honor Cf-Connecting-Ip if the
-	// request's immediate peer is a trusted hop; otherwise the header is
-	// spoofable and we resolve no client IP (block during maintenance).
-	if !m.remoteAddrTrusted(req) {
-		if m.debug {
-			fmt.Fprintf(logx.Out, "[MaintenanceCheck] Request peer %s is not a trusted proxy; ignoring Cf-Connecting-Ip\n", req.RemoteAddr)
-		}
-		return false
-	}
-
-	// Get ALL client IPs from all headers
-	clientIPs := getAllClientIPs(req, m.debug)
-
-	// No IPs found at all
-	if len(clientIPs) == 0 {
-		if m.debug {
-			fmt.Fprintf(logx.Out, "[MaintenanceCheck] Could not determine any client IPs, blocking request\n")
-		}
-		return false
-	}
-
-	if m.debug {
-		fmt.Fprintf(logx.Out, "[MaintenanceCheck] Client IPs for whitelist check: %v\n", clientIPs)
-		fmt.Fprintf(logx.Out, "[MaintenanceCheck] Beginning whitelist evaluation for %d IPs\n", len(clientIPs))
-	}
-
-	// Check each client IP against the whitelist
-	// If ANY IP matches, allow the request
-	for _, clientIP := range clientIPs {
-		if clientIP == "" {
-			continue
-		}
-
-		for _, whitelistEntry := range whitelist {
-			if m.matchWhitelistEntry(clientIP, whitelistEntry) {
-				return true
-			}
-		}
-	}
-
-	if m.debug {
-		fmt.Fprintf(logx.Out, "[MaintenanceCheck] None of the client IPs %v matched whitelist, blocking request\n", clientIPs)
 	}
 	return false
 }
@@ -191,10 +198,10 @@ func (m *MaintenanceCheck) isClientAllowed(req *http.Request, whitelist []string
 // entry: an exact IP match (IPv6-canonical via ipExactMatch) or, for an entry
 // in CIDR notation, a range match. It does not handle the "*" wildcard — the
 // caller checks that before iterating entries.
-func (m *MaintenanceCheck) matchWhitelistEntry(clientIP, whitelistEntry string) bool {
+func matchWhitelistEntry(clientIP, whitelistEntry string, debug bool) bool {
 	// Exact match (IPv6-canonical via net.ParseIP; non-IP entries compared raw)
 	if ipExactMatch(clientIP, whitelistEntry) {
-		if m.debug {
+		if debug {
 			fmt.Fprintf(logx.Out, "[MaintenanceCheck] IP '%s' matches whitelist entry '%s', allowing request\n", clientIP, whitelistEntry)
 		}
 		return true
@@ -202,21 +209,21 @@ func (m *MaintenanceCheck) matchWhitelistEntry(clientIP, whitelistEntry string) 
 
 	// CIDR notation match
 	if strings.Contains(whitelistEntry, "/") {
-		if m.debug {
+		if debug {
 			fmt.Fprintf(logx.Out, "[MaintenanceCheck] Checking if IP '%s' is in CIDR range '%s'\n", clientIP, whitelistEntry)
 		}
 
 		match, err := isCIDRMatch(clientIP, whitelistEntry)
 		if err != nil {
-			if m.debug {
+			if debug {
 				fmt.Fprintf(logx.Out, "[MaintenanceCheck] Error checking CIDR match: %v\n", err)
 			}
 		} else if match {
-			if m.debug {
+			if debug {
 				fmt.Fprintf(logx.Out, "[MaintenanceCheck] IP '%s' is in CIDR range '%s', allowing request\n", clientIP, whitelistEntry)
 			}
 			return true
-		} else if m.debug {
+		} else if debug {
 			fmt.Fprintf(logx.Out, "[MaintenanceCheck] IP '%s' is NOT in CIDR range '%s'\n", clientIP, whitelistEntry)
 		}
 	}
@@ -238,7 +245,7 @@ func ipExactMatch(clientIP, entry string) bool {
 }
 
 // isCIDRMatch checks if an IP is contained within a CIDR range
-func isCIDRMatch(ip, cidr string) (bool, error) {
+func isCIDRMatch(ipStr, cidr string) (bool, error) {
 	// Parse the CIDR notation
 	_, ipNet, err := net.ParseCIDR(cidr)
 	if err != nil {
@@ -246,9 +253,9 @@ func isCIDRMatch(ip, cidr string) (bool, error) {
 	}
 
 	// Parse the IP
-	parsedIP := net.ParseIP(ip)
+	parsedIP := net.ParseIP(ipStr)
 	if parsedIP == nil {
-		return false, fmt.Errorf("invalid IP address %s (cannot be parsed as IPv4 or IPv6)", ip)
+		return false, fmt.Errorf("invalid IP address %s (cannot be parsed as IPv4 or IPv6)", ipStr)
 	}
 
 	// Check if the IP is the correct version (IPv4/IPv6) for the CIDR
@@ -256,7 +263,7 @@ func isCIDRMatch(ip, cidr string) (bool, error) {
 		return false, fmt.Errorf("IP version mismatch: CIDR %s is %s but IP %s is %s",
 			cidr,
 			ipVersionName(ipNet.IP),
-			ip,
+			ipStr,
 			ipVersionName(parsedIP))
 	}
 

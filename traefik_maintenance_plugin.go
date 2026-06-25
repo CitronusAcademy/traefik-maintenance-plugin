@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/CitronusAcademy/traefik-maintenance-plugin/internal/cors"
+	"github.com/CitronusAcademy/traefik-maintenance-plugin/internal/ip"
 	"github.com/CitronusAcademy/traefik-maintenance-plugin/internal/logx"
 	"github.com/CitronusAcademy/traefik-maintenance-plugin/internal/skip"
 )
@@ -183,7 +184,7 @@ func (m *MaintenanceCheck) ServeHTTP(rw http.ResponseWriter, req *http.Request) 
 			return
 		}
 
-		if m.isClientAllowed(req, whitelist) {
+		if ip.IsClientAllowed(req, whitelist, m.trustedProxies, m.debug) {
 			m.next.ServeHTTP(rw, req)
 			return
 		}
@@ -211,7 +212,7 @@ func (m *MaintenanceCheck) handleCORSPreflightRequest(rw http.ResponseWriter, re
 	clientOrigin := req.Header.Get("Origin")
 	m.setCORSPreflightHeaders(rw, clientOrigin)
 
-	if !m.isClientAllowed(req, whitelist) {
+	if !ip.IsClientAllowed(req, whitelist, m.trustedProxies, m.debug) {
 		m.sendBlockedPreflightResponse(rw)
 		return true
 	}
