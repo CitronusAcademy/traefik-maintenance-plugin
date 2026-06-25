@@ -58,7 +58,7 @@ experimental:
   plugins:
     maintenanceCheck:
       moduleName: github.com/CitronusAcademy/traefik-maintenance-plugin
-      version: "v0.1.0"
+      version: "v1.0.0"
 ```
 
 ## Configuration
