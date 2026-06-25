@@ -112,12 +112,19 @@ func TestTopLevelSecretUsedWhenPerSuffixValueEmpty(t *testing.T) {
 	plugin.ResetSharedCacheForTesting()
 	defer plugin.ResetSharedCacheForTesting()
 
-	gotSecret := make(chan string, 1)
+	// Capture via a mutex-guarded variable rather than a channel send inside the
+	// handler: Yaegi (Traefik's interpreter) panics on a select/channel-send in an
+	// interpreted handler invoked from compiled net/http, but handles this pattern.
+	var mu sync.Mutex
+	var gotSecret string
+	var called bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		select {
-		case gotSecret <- r.Header.Get("X-Plugin-Secret"):
-		default:
+		mu.Lock()
+		if !called {
+			gotSecret = r.Header.Get("X-Plugin-Secret")
+			called = true
 		}
+		mu.Unlock()
 		_, _ = w.Write([]byte(`{"system_config":{"maintenance":{"is_active":true,"whitelist":[]}}}`))
 	}))
 	defer srv.Close()
@@ -140,12 +147,25 @@ func TestTopLevelSecretUsedWhenPerSuffixValueEmpty(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	select {
-	case s := <-gotSecret:
-		if s != "real-secret-token" {
-			t.Fatalf("maintenance API received secret %q, want %q", s, "real-secret-token")
+	// Wait for the background refresher to hit the API.
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		done := called
+		mu.Unlock()
+		if done {
+			break
 		}
-	case <-time.After(3 * time.Second):
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	mu.Lock()
+	s, done := gotSecret, called
+	mu.Unlock()
+	if !done {
 		t.Fatal("maintenance API was never called")
+	}
+	if s != "real-secret-token" {
+		t.Fatalf("maintenance API received secret %q, want %q", s, "real-secret-token")
 	}
 }
