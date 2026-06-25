@@ -28,12 +28,23 @@ func TestTrustedProxiesBlocksSpoofedHeader(t *testing.T) {
 	}
 }
 
-func TestIPVersionName(t *testing.T) {
-	if got := ipVersionName(net.ParseIP("1.2.3.4")); got != "IPv4" {
-		t.Errorf("IPv4: got %q", got)
+func TestIsCIDRMatchVersionMismatch(t *testing.T) {
+	// A client IP and CIDR of different IP versions must simply not match —
+	// no error, no special-casing (net.IPNet.Contains returns false).
+	got, err := isCIDRMatch("1.2.3.4", "2001:db8::/32")
+	if err != nil {
+		t.Fatalf("IPv4-in-IPv6-CIDR: unexpected error: %v", err)
 	}
-	if got := ipVersionName(net.ParseIP("2001:db8::1")); got != "IPv6" {
-		t.Errorf("IPv6: got %q", got)
+	if got {
+		t.Fatal("IPv4 client must not match an IPv6 CIDR")
+	}
+
+	got, err = isCIDRMatch("2001:db8::1", "10.0.0.0/8")
+	if err != nil {
+		t.Fatalf("IPv6-in-IPv4-CIDR: unexpected error: %v", err)
+	}
+	if got {
+		t.Fatal("IPv6 client must not match an IPv4 CIDR")
 	}
 }
 

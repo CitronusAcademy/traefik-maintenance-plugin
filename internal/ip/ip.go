@@ -244,7 +244,9 @@ func ipExactMatch(clientIP, entry string) bool {
 	return entry == clientIP
 }
 
-// isCIDRMatch checks if an IP is contained within a CIDR range
+// isCIDRMatch checks if an IP is contained within a CIDR range. An IP/CIDR
+// version mismatch (IPv4 IP vs IPv6 range or vice-versa) is not special-cased:
+// net.IPNet.Contains already returns false for it.
 func isCIDRMatch(ipStr, cidr string) (bool, error) {
 	// Parse the CIDR notation
 	_, ipNet, err := net.ParseCIDR(cidr)
@@ -258,23 +260,6 @@ func isCIDRMatch(ipStr, cidr string) (bool, error) {
 		return false, fmt.Errorf("invalid IP address %s (cannot be parsed as IPv4 or IPv6)", ipStr)
 	}
 
-	// Check if the IP is the correct version (IPv4/IPv6) for the CIDR
-	if (ipNet.IP.To4() == nil) != (parsedIP.To4() == nil) {
-		return false, fmt.Errorf("IP version mismatch: CIDR %s is %s but IP %s is %s",
-			cidr,
-			ipVersionName(ipNet.IP),
-			ipStr,
-			ipVersionName(parsedIP))
-	}
-
 	// Check if the IP is contained in the CIDR range
 	return ipNet.Contains(parsedIP), nil
-}
-
-// ipVersionName returns a string indicating whether an IP is IPv4 or IPv6
-func ipVersionName(ip net.IP) string {
-	if ip.To4() != nil {
-		return "IPv4"
-	}
-	return "IPv6"
 }
