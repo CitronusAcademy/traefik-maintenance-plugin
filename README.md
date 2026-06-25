@@ -226,7 +226,7 @@ that header before it reaches Traefik.
 | `skipHosts` | `[]` | Hostnames that always bypass maintenance; supports `*.example.com`. |
 | `allowHTMLWhenMaintenance` | `true` | Allow GET/HEAD requests that accept `text/html` (lets a status page load while APIs stay blocked). |
 | `allowStaticExtensions` | common web asset extensions | File extensions allowed for GET/HEAD during maintenance. |
-| `allowedOrigins` | `[]` | CORS origin allow-list. Empty reflects any `Origin`; non-empty reflects only listed origins. |
+| `allowedOrigins` | `[]` | CORS origin allow-list. Empty reflects any `Origin` (without credentials); non-empty reflects only listed origins and sends `Access-Control-Allow-Credentials: true` for them. |
 | `corsAllowAnyOrigin` | `true` | When `allowedOrigins` is empty, reflect any `Origin` (default). Set `false` to send no CORS `Access-Control-Allow-Origin` unless the request's `Origin` matches `allowedOrigins`. |
 | `trustedProxies` | `[]` | CIDR ranges for trusted immediate peers. When set, `Cf-Connecting-Ip` is only honored if the request's direct peer (`RemoteAddr`) falls in one of these ranges; otherwise no client IP is resolved (blocked during maintenance). Empty = trust the header unconditionally. |
 | `strictAssetMatching` | `false` | When `true`, match `allowStaticExtensions` against the URL's real file extension (`path.Ext`), so paths like `/data.json/x` are not treated as static assets. |
@@ -249,12 +249,16 @@ These are the non-obvious behaviors worth knowing before relying on the plugin.
   can flicker for up to one `cacheDurationInSeconds` window. Single-replica deployments do
   not see this.
 
-- **`debug: true` logs full request headers**, including `Authorization` (e.g. bearer
-  tokens) and cookies, to stdout. Keep it off in any shared or production environment.
+- **`debug: true` logs request headers to stdout.** Sensitive headers —
+  `Authorization`, `Cookie`, `Set-Cookie`, `Proxy-Authorization`, and every
+  configured secret header — are redacted to `[REDACTED]`; all other headers are
+  logged verbatim. Still keep it off in any shared or production environment.
 
-- **CORS origin reflection.** With `allowedOrigins` empty, the plugin reflects whatever
-  `Origin` the request sent and sets `Access-Control-Allow-Credentials: true`. If you need
-  to restrict which origins are reflected, set `allowedOrigins` explicitly.
+- **CORS credentials require an explicit origin allow-list.** With `allowedOrigins`
+  empty, the plugin reflects whatever `Origin` the request sent but does **not** send
+  `Access-Control-Allow-Credentials` — reflecting an arbitrary origin together with
+  credentials is the insecure CORS combination. Only origins you list explicitly in
+  `allowedOrigins` receive `Access-Control-Allow-Credentials: true`.
 
 - **Fail-open on API errors.** If the API is unreachable or returns an error, the plugin
   keeps serving the last cached state and retries with exponential backoff. On a cold start

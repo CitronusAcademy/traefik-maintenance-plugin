@@ -203,11 +203,14 @@ func TestCORSFunctionalityDuringMaintenance(t *testing.T) {
 				}
 			}
 
-			// For responses with CORS headers, check that credentials are allowed (only if origin was present)
+			// These cases use the default config (allow-any, empty allowedOrigins), so
+			// origins are reflected by the wildcard. Per the credentialed-wildcard
+			// hardening, such responses must NOT carry Access-Control-Allow-Credentials
+			// (credentials are sent only for an explicitly allow-listed origin — see
+			// TestCORSCredentialsOnlyForAllowlistedOrigin).
 			if tt.expectedCORSOrigin != "" && (tt.expectedStatusCode == 512 || tt.method == http.MethodOptions) {
-				credentialsAllowed := response.Header.Get("Access-Control-Allow-Credentials")
-				if credentialsAllowed != "true" {
-					t.Errorf("%s: Expected Access-Control-Allow-Credentials 'true', got '%s'", tt.description, credentialsAllowed)
+				if got := response.Header.Get("Access-Control-Allow-Credentials"); got != "" {
+					t.Errorf("%s: wildcard-reflected origin must not get Access-Control-Allow-Credentials, got '%s'", tt.description, got)
 				}
 			}
 
@@ -375,5 +378,69 @@ func TestDisallowedOriginNotReflected(t *testing.T) {
 	h.ServeHTTP(rec2, req2)
 	if got := rec2.Header().Get("Access-Control-Allow-Origin"); got != "https://app.world" {
 		t.Fatalf("allowed origin not reflected: ACAO=%q", got)
+	}
+}
+
+// TestCORSCredentialsOnlyForAllowlistedOrigin verifies the credentialed-wildcard
+// hardening end-to-end: an explicitly allow-listed origin receives
+// Access-Control-Allow-Credentials: true, while an origin reflected only by the
+// allow-any default does not.
+func TestCORSCredentialsOnlyForAllowlistedOrigin(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"system_config":{"maintenance":{"is_active":true,"whitelist":[]}}}`))
+	}))
+	defer srv.Close()
+
+	const origin = "https://app.world"
+
+	credentialsFor := func(t *testing.T, allowedOrigins []string) string {
+		t.Helper()
+		plugin.ResetSharedCacheForTesting()
+		defer plugin.ResetSharedCacheForTesting()
+
+		cfg := plugin.CreateConfig()
+		cfg.MaintenanceStatusCode = 512
+		cfg.CacheDurationInSeconds = 30
+		cfg.RequestTimeoutInSeconds = 5
+		cfg.EnvironmentEndpoints = map[string]string{".world": srv.URL}
+		cfg.AllowedOrigins = allowedOrigins
+
+		next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+		h, err := plugin.New(context.Background(), next, cfg, "test")
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+
+		// Wait for maintenance to be cached active.
+		deadline := time.Now().Add(3 * time.Second)
+		var rec *httptest.ResponseRecorder
+		for time.Now().Before(deadline) {
+			rec = httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "http://example.world/api", nil)
+			req.Host = "example.world"
+			req.Header.Set("Origin", origin)
+			h.ServeHTTP(rec, req)
+			if rec.Code == 512 {
+				break
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		if rec.Code != 512 {
+			t.Fatalf("expected 512 maintenance response, got %d", rec.Code)
+		}
+		if got := rec.Header().Get("Access-Control-Allow-Origin"); got != origin {
+			t.Fatalf("origin not reflected: ACAO=%q", got)
+		}
+		return rec.Header().Get("Access-Control-Allow-Credentials")
+	}
+
+	// Allow-any default (empty allowedOrigins): reflected, but no credentials.
+	if got := credentialsFor(t, nil); got != "" {
+		t.Errorf("wildcard-reflected origin must not get credentials, got %q", got)
+	}
+
+	// Explicitly allow-listed origin: credentials sent.
+	if got := credentialsFor(t, []string{origin}); got != "true" {
+		t.Errorf("allow-listed origin must get credentials, got %q", got)
 	}
 }
