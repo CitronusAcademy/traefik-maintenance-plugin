@@ -4,6 +4,7 @@
   <a href="https://github.com/CitronusAcademy/traefik-maintenance-plugin/actions/workflows/ci.yml"><img src="https://github.com/CitronusAcademy/traefik-maintenance-plugin/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://codecov.io/gh/CitronusAcademy/traefik-maintenance-plugin"><img src="https://codecov.io/gh/CitronusAcademy/traefik-maintenance-plugin/branch/main/graph/badge.svg" alt="codecov"></a>
   <a href="go.mod"><img src="https://img.shields.io/github/go-mod/go-version/CitronusAcademy/traefik-maintenance-plugin" alt="Go Version"></a>
+  <a href="https://goreportcard.com/report/github.com/CitronusAcademy/traefik-maintenance-plugin"><img src="https://goreportcard.com/badge/github.com/CitronusAcademy/traefik-maintenance-plugin" alt="Go Report Card"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
 </p>
 
