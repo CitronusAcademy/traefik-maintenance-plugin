@@ -323,6 +323,36 @@ go vet ./...
 gofmt -l .
 ```
 
+### Running locally before publishing
+
+Traefik can load the plugin straight from disk via `localPlugins`, with no git tag required. Register it in the
+**static** configuration:
+
+```yaml
+experimental:
+  localPlugins:
+    maintenanceCheck:
+      moduleName: github.com/CitronusAcademy/traefik-maintenance-plugin
+```
+
+Traefik expects the plugin sources under `./plugins-local/` mirroring the module path. Clone this repository to:
+
+```
+.
+└── plugins-local
+    └── src
+        └── github.com
+            └── CitronusAcademy
+                └── traefik-maintenance-plugin   <- this repo (must contain .traefik.yml)
+```
+
+Then start Traefik from the directory that holds `plugins-local/`. To check the plugin still loads under the same
+interpreter Traefik uses, run the Yaegi test:
+
+```bash
+make yaegi_test
+```
+
 The plugin has **no external dependencies** — it uses only the Go standard library, which
 keeps it compatible with Traefik's Yaegi interpreter.
 
