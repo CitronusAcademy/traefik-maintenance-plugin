@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/CitronusAcademy/traefik-maintenance-plugin/internal/cors"
 	"github.com/CitronusAcademy/traefik-maintenance-plugin/internal/logx"
 	"github.com/CitronusAcademy/traefik-maintenance-plugin/internal/skip"
 )
@@ -195,4 +196,59 @@ func (m *MaintenanceCheck) ServeHTTP(rw http.ResponseWriter, req *http.Request) 
 		fmt.Fprintf(logx.Out, "[MaintenanceCheck] Maintenance mode is inactive, allowing request\n")
 	}
 	m.next.ServeHTTP(rw, req)
+}
+
+func (m *MaintenanceCheck) handleCORSPreflightRequest(rw http.ResponseWriter, req *http.Request, normalizedHost string) bool {
+	if req.Method != http.MethodOptions {
+		return false
+	}
+
+	isActive, whitelist := getMaintenanceStatusForDomain(normalizedHost)
+	if !isActive {
+		return false
+	}
+
+	clientOrigin := req.Header.Get("Origin")
+	m.setCORSPreflightHeaders(rw, clientOrigin)
+
+	if !m.isClientAllowed(req, whitelist) {
+		m.sendBlockedPreflightResponse(rw)
+		return true
+	}
+
+	m.sendSuccessfulPreflightResponse(rw)
+	return true
+}
+
+func (m *MaintenanceCheck) setCORSPreflightHeaders(rw http.ResponseWriter, origin string) {
+	cors.WriteHeaders(rw, origin, m.allowedOrigins, m.corsAllowAnyOrigin, m.debug)
+}
+
+func (m *MaintenanceCheck) sendBlockedPreflightResponse(rw http.ResponseWriter) {
+	if m.debug {
+		fmt.Fprintf(logx.Out, "[MaintenanceCheck] CORS preflight completed, but actual request will be blocked due to maintenance mode\n")
+	}
+
+	// Preflight must always return 2xx status according to CORS spec
+	rw.WriteHeader(http.StatusOK)
+}
+
+func (m *MaintenanceCheck) sendSuccessfulPreflightResponse(rw http.ResponseWriter) {
+	rw.WriteHeader(http.StatusNoContent)
+}
+
+func (m *MaintenanceCheck) sendMaintenanceResponseWithCORS(rw http.ResponseWriter, req *http.Request) {
+	if m.debug {
+		fmt.Fprintf(logx.Out, "[MaintenanceCheck] Access denied, returning status code %d\n", m.maintenanceStatusCode)
+	}
+
+	m.addCORSHeadersToMaintenanceResponse(rw, req)
+
+	rw.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	rw.WriteHeader(m.maintenanceStatusCode)
+	_, _ = rw.Write([]byte("Service is in maintenance mode"))
+}
+
+func (m *MaintenanceCheck) addCORSHeadersToMaintenanceResponse(rw http.ResponseWriter, req *http.Request) {
+	cors.WriteHeaders(rw, req.Header.Get("Origin"), m.allowedOrigins, m.corsAllowAnyOrigin, m.debug)
 }
