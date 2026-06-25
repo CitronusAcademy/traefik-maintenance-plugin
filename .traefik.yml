@@ -6,6 +6,8 @@ import: github.com/CitronusAcademy/traefik-maintenance-plugin
 
 summary: "A middleware that checks if a service is in maintenance mode and returns an appropriate status code"
 
+iconPath: .assets/icon.png
+
 testData:
   environmentEndpoints:
     "": "http://maintenance-service/v1/configurations/"
