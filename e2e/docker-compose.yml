@@ -1,0 +1,16 @@
+services:
+  traefik:
+    image: traefik:v3.1.5
+    command: ["--configFile=/etc/traefik/traefik.yml"]
+    ports: ["8000:80"]
+    volumes:
+      - ./traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./dynamic.yml:/etc/traefik/dynamic.yml:ro
+      - ..:/plugins-local/src/github.com/CitronusAcademy/traefik-maintenance-plugin:ro
+    depends_on: [whoami, mock]
+  whoami:
+    image: traefik/whoami
+  mock:
+    image: nginx:alpine
+    volumes:
+      - ./mock:/usr/share/nginx/html:ro

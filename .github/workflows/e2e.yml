@@ -1,0 +1,22 @@
+name: e2e
+on:
+  push: { branches: [main] }
+  pull_request:
+jobs:
+  traefik:
+    name: end-to-end (real traefik)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Boot Traefik with the plugin
+        run: docker compose -f e2e/docker-compose.yml up -d --wait
+      - name: Wait for Traefik
+        run: |
+          for i in $(seq 1 30); do
+            curl -sf -o /dev/null -H "Host: off.localhost" http://127.0.0.1:8000/ && break || sleep 2
+          done
+      - name: Assert maintenance behavior
+        run: bash e2e/assert.sh
+      - name: Traefik logs on failure
+        if: failure()
+        run: docker compose -f e2e/docker-compose.yml logs traefik

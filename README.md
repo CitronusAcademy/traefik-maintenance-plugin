@@ -6,6 +6,7 @@
 
 <p align="center">
   <a href="https://github.com/CitronusAcademy/traefik-maintenance-plugin/actions/workflows/ci.yml"><img src="https://github.com/CitronusAcademy/traefik-maintenance-plugin/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/CitronusAcademy/traefik-maintenance-plugin/actions/workflows/e2e.yml"><img src="https://github.com/CitronusAcademy/traefik-maintenance-plugin/actions/workflows/e2e.yml/badge.svg" alt="e2e"></a>
   <a href="https://codecov.io/gh/CitronusAcademy/traefik-maintenance-plugin"><img src="https://codecov.io/gh/CitronusAcademy/traefik-maintenance-plugin/branch/main/graph/badge.svg" alt="codecov"></a>
   <a href="go.mod"><img src="https://img.shields.io/github/go-mod/go-version/CitronusAcademy/traefik-maintenance-plugin" alt="Go Version"></a>
   <a href="https://goreportcard.com/report/github.com/CitronusAcademy/traefik-maintenance-plugin"><img src="https://goreportcard.com/badge/github.com/CitronusAcademy/traefik-maintenance-plugin" alt="Go Report Card"></a>
@@ -28,6 +29,7 @@ or hosts you choose to exempt.
 - [Client IP detection](#client-ip-detection)
 - [Parameters](#parameters)
 - [Operational notes](#operational-notes)
+- [Verified inside Traefik](#verified-inside-traefik)
 - [Development](#development)
 
 ## Quick start
@@ -335,6 +337,14 @@ These are the non-obvious behaviors worth knowing before relying on the plugin.
   keeps serving the last cached state and retries with exponential backoff. On a cold start
   where the very first fetch fails, no prior state exists and the plugin treats maintenance
   as inactive (allows traffic) until a fetch succeeds.
+
+## Verified inside Traefik
+
+Every push runs an end-to-end job that boots a real **Traefik v3.1.5** container, loads this
+plugin through the same `experimental.localPlugins` (Yaegi) path production uses, and drives
+live HTTP through it — asserting that maintenance blocks non-whitelisted clients with the
+configured status code, lets whitelisted clients through, and passes traffic when maintenance
+is off. See the `e2e` badge above for the latest run.
 
 ## Development
 
