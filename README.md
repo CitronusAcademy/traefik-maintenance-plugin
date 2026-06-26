@@ -39,7 +39,7 @@ experimental:
   plugins:
     maintenanceCheck:
       moduleName: github.com/CitronusAcademy/traefik-maintenance-plugin
-      version: "v1.0.0" # pin to the latest release tag
+      version: "v1.0.1" # pin to the latest release tag
 ```
 
 **2. Attach the middleware** to your router (Kubernetes CRD shown):
@@ -92,18 +92,15 @@ flowchart TD
 
 ## Features
 
-- Reads maintenance status from a configurable HTTP API endpoint.
-- Refreshes status in the background at a configurable interval — **the request path never
-  calls the API**, so there is no per-request latency.
-- IP whitelist with CIDR ranges and a `*` wildcard to allow all traffic.
-- Per-environment routing: map domain suffixes to different API endpoints, each with its
-  own cached state and secret header.
-- Skip rules: bypass maintenance for specific URL prefixes or hosts (hosts support
-  `*.example.com` wildcards).
-- Optional passthrough of base HTML pages and/or static assets while keeping APIs blocked.
-- CORS support for preflight and blocked responses, with an optional origin allow-list.
-- Configurable maintenance status code and request timeout.
-- Graceful fallback to the last cached value when the API is unavailable.
+- **Centrally managed state** — maintenance status and the IP whitelist are read from an HTTP API in the background, so you flip maintenance for every node and replica from one place; the API is never on the request path.
+- **Operator bypass during maintenance** — an IP whitelist (CIDR and wildcard, canonical IPv6) keeps named clients, hosts, and paths working while everyone else sees the maintenance response.
+- **Per-environment routing** — map domain suffixes to different status endpoints and secrets, each with its own cache and state.
+- **Secret-gated** — an optional shared secret header authenticates the plugin to the status API.
+- **CORS-aware** — preflight requests are handled correctly even while maintenance is active.
+- **Granular skip rules** — exempt hosts, path prefixes, static assets, and HTML documents so a single-page app can still serve its own maintenance screen.
+- **Resilient** — exponential backoff with jitter and a last-known-good cache keep traffic flowing if the status API is briefly unavailable.
+- **Configurable response** — return your own HTML/JSON body (inline or from a mounted file) with a chosen content type, plus `Retry-After` and `Cache-Control` headers.
+- **Zero dependencies** — standard library only, Yaegi-native, no external modules.
 
 ## Installation
 
@@ -114,7 +111,7 @@ experimental:
   plugins:
     maintenanceCheck:
       moduleName: github.com/CitronusAcademy/traefik-maintenance-plugin
-      version: "v1.0.0" # pin to the latest release tag
+      version: "v1.0.1" # pin to the latest release tag
 ```
 
 ## Configuration
@@ -152,6 +149,23 @@ spec:
         - ".ico"
       allowedOrigins: []   # empty = reflect any Origin; see Operational notes
       debug: false
+```
+
+Custom maintenance page (mounted file) with a retry hint:
+
+```yaml
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: maintenance-check
+spec:
+  plugin:
+    maintenanceCheck:
+      environmentEndpoints:
+        "": "https://maintenance-api.example.com/v1/configurations/"
+      maintenanceResponseFilePath: "/config/maintenance.html"
+      maintenanceContentType: "text/html; charset=utf-8"
+      retryAfterSeconds: 120
 ```
 
 ### Other provider formats
@@ -282,6 +296,11 @@ that header before it reaches Traefik.
 | `corsAllowAnyOrigin` | `bool` | `true` | When `allowedOrigins` is empty: `true` reflects any `Origin` (no credentials); `false` sends no CORS origin header. |
 | `trustedProxies` | `[]string` | `[]` | CIDR ranges for trusted direct peers. When set, `Cf-Connecting-Ip` is honored only if `RemoteAddr` falls in one of them. Empty = trust unconditionally. |
 | `secretHeader` / `secretHeaderValue` | `string` / `string` | `X-Plugin-Secret` / `""` | Fallback secret used when an environment has no per-environment secret. |
+| `maintenanceResponseBody` | `string` | `""` | Inline body returned while maintenance is active. Empty serves the built-in `Service is in maintenance mode` text. |
+| `maintenanceResponseFilePath` | `string` | `""` | Path to a file (read once at startup) whose contents are returned as the maintenance body. Takes precedence over `maintenanceResponseBody`; an unreadable path logs a warning and falls back. |
+| `maintenanceContentType` | `string` | `text/plain; charset=utf-8` | `Content-Type` of the maintenance response. |
+| `retryAfterSeconds` | `int` | `0` | When > 0, sets `Retry-After: <n>` on the maintenance response. |
+| `maintenanceCacheControl` | `string` | `no-store` | `Cache-Control` of the maintenance response. Set to `""` to omit the header. |
 | `debug` | `bool` | `false` | Verbose stdout logging. See the warning in **Operational notes**. |
 
 ## Operational notes

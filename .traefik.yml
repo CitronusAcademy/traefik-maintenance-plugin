@@ -36,6 +36,10 @@ testData:
   trustedProxies:
     - "173.245.48.0/20"
   strictAssetMatching: true
+  maintenanceResponseBody: "<h1>We'll be right back</h1>"
+  maintenanceContentType: "text/html; charset=utf-8"
+  retryAfterSeconds: 120
+  maintenanceCacheControl: "no-store"
   debug: false
 
 id: maintenanceCheck
