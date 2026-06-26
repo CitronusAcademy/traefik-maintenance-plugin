@@ -37,10 +37,19 @@ jobs:
         run: go vet ./...
       - name: Test (race + coverage)
         run: go test -race -covermode=atomic -coverprofile=coverage.out ./...
+      - name: Convert to lcov
+        run: |
+          go install github.com/jandelgado/gcov2lcov@latest
+          gcov2lcov -infile coverage.out -outfile coverage.lcov
+      - name: Coverage gate (line coverage, matches Codecov)
+        run: |
+          pct=$(awk -F: '/^LF:/{f+=$2}/^LH:/{h+=$2}END{printf "%.1f",100*h/f}' coverage.lcov)
+          echo "line coverage: $pct%"
+          awk "BEGIN{exit !($pct>=90)}" || { echo "below 90% line coverage"; exit 1; }
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v7
         with:
-          files: ./coverage.out
+          files: ./coverage.lcov
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
 
