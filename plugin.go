@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -16,18 +17,43 @@ import (
 )
 
 type MaintenanceCheck struct {
-	next                  http.Handler
-	skipPrefixes          []string
-	skipHosts             []string
-	allowHTML             bool
-	allowStaticExts       []string
-	maintenanceStatusCode int
-	debug                 bool
-	allowedOrigins        []string
-	corsAllowAnyOrigin    bool
-	trustedProxies        []*net.IPNet
-	strictAssetMatching   bool
-	sensitiveHeaders      map[string]struct{}
+	next                   http.Handler
+	skipPrefixes           []string
+	skipHosts              []string
+	allowHTML              bool
+	allowStaticExts        []string
+	maintenanceStatusCode  int
+	debug                  bool
+	allowedOrigins         []string
+	corsAllowAnyOrigin     bool
+	trustedProxies         []*net.IPNet
+	strictAssetMatching    bool
+	sensitiveHeaders       map[string]struct{}
+	maintenanceBody        []byte
+	maintenanceContentType string
+}
+
+// resolveMaintenanceResponse decides, once at startup, what body and content
+// type the maintenance response serves. Precedence: a readable file path, then
+// an inline body, then the built-in plain-text stub. The file is read here (not
+// on the request path) so Yaegi never touches the filesystem per request; an
+// unreadable file logs a warning and falls back rather than failing startup.
+func resolveMaintenanceResponse(config *Config) ([]byte, string) {
+	contentType := strings.TrimSpace(config.MaintenanceContentType)
+	if contentType == "" {
+		contentType = "text/plain; charset=utf-8"
+	}
+	if path := strings.TrimSpace(config.MaintenanceResponseFilePath); path != "" {
+		if data, err := os.ReadFile(path); err == nil {
+			return data, contentType
+		} else {
+			fmt.Fprintf(logx.Out, "[MaintenanceCheck] Warning: cannot read maintenanceResponseFilePath %q: %v; falling back\n", path, err)
+		}
+	}
+	if config.MaintenanceResponseBody != "" {
+		return []byte(config.MaintenanceResponseBody), contentType
+	}
+	return []byte("Service is in maintenance mode"), contentType
 }
 
 func New(_ context.Context, next http.Handler, config *Config, name string) (http.Handler, error) {
@@ -124,19 +150,23 @@ func New(_ context.Context, next http.Handler, config *Config, name string) (htt
 		}
 	}
 
+	maintenanceBody, maintenanceContentType := resolveMaintenanceResponse(config)
+
 	m := &MaintenanceCheck{
-		next:                  next,
-		skipPrefixes:          skipPrefixesCopy,
-		skipHosts:             skipHostsCopy,
-		allowHTML:             config.AllowHTMLWhenMaintenance,
-		allowStaticExts:       staticExtsCopy,
-		maintenanceStatusCode: config.MaintenanceStatusCode,
-		debug:                 config.Debug,
-		allowedOrigins:        allowedOriginsCopy,
-		corsAllowAnyOrigin:    config.CorsAllowAnyOrigin,
-		trustedProxies:        trustedProxies,
-		strictAssetMatching:   config.StrictAssetMatching,
-		sensitiveHeaders:      sensitiveHeaders,
+		next:                   next,
+		skipPrefixes:           skipPrefixesCopy,
+		skipHosts:              skipHostsCopy,
+		allowHTML:              config.AllowHTMLWhenMaintenance,
+		allowStaticExts:        staticExtsCopy,
+		maintenanceStatusCode:  config.MaintenanceStatusCode,
+		debug:                  config.Debug,
+		allowedOrigins:         allowedOriginsCopy,
+		corsAllowAnyOrigin:     config.CorsAllowAnyOrigin,
+		trustedProxies:         trustedProxies,
+		strictAssetMatching:    config.StrictAssetMatching,
+		sensitiveHeaders:       sensitiveHeaders,
+		maintenanceBody:        maintenanceBody,
+		maintenanceContentType: maintenanceContentType,
 	}
 
 	return m, nil
@@ -276,9 +306,9 @@ func (m *MaintenanceCheck) sendMaintenanceResponseWithCORS(rw http.ResponseWrite
 
 	m.addCORSHeadersToMaintenanceResponse(rw, req)
 
-	rw.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	rw.Header().Set("Content-Type", m.maintenanceContentType)
 	rw.WriteHeader(m.maintenanceStatusCode)
-	_, _ = rw.Write([]byte("Service is in maintenance mode"))
+	_, _ = rw.Write(m.maintenanceBody)
 }
 
 func (m *MaintenanceCheck) addCORSHeadersToMaintenanceResponse(rw http.ResponseWriter, req *http.Request) {
