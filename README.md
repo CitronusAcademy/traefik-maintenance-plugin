@@ -39,7 +39,7 @@ experimental:
   plugins:
     maintenanceCheck:
       moduleName: github.com/CitronusAcademy/traefik-maintenance-plugin
-      version: "v1.0.0"
+      version: "v1.0.0" # pin to the latest release tag
 ```
 
 **2. Attach the middleware** to your router (Kubernetes CRD shown):
@@ -114,7 +114,7 @@ experimental:
   plugins:
     maintenanceCheck:
       moduleName: github.com/CitronusAcademy/traefik-maintenance-plugin
-      version: "v1.0.0"
+      version: "v1.0.0" # pin to the latest release tag
 ```
 
 ## Configuration
