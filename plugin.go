@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,20 +18,22 @@ import (
 )
 
 type MaintenanceCheck struct {
-	next                   http.Handler
-	skipPrefixes           []string
-	skipHosts              []string
-	allowHTML              bool
-	allowStaticExts        []string
-	maintenanceStatusCode  int
-	debug                  bool
-	allowedOrigins         []string
-	corsAllowAnyOrigin     bool
-	trustedProxies         []*net.IPNet
-	strictAssetMatching    bool
-	sensitiveHeaders       map[string]struct{}
-	maintenanceBody        []byte
-	maintenanceContentType string
+	next                    http.Handler
+	skipPrefixes            []string
+	skipHosts               []string
+	allowHTML               bool
+	allowStaticExts         []string
+	maintenanceStatusCode   int
+	debug                   bool
+	allowedOrigins          []string
+	corsAllowAnyOrigin      bool
+	trustedProxies          []*net.IPNet
+	strictAssetMatching     bool
+	sensitiveHeaders        map[string]struct{}
+	maintenanceBody         []byte
+	maintenanceContentType  string
+	retryAfterSeconds       int
+	maintenanceCacheControl string
 }
 
 // resolveMaintenanceResponse decides, once at startup, what body and content
@@ -152,21 +155,28 @@ func New(_ context.Context, next http.Handler, config *Config, name string) (htt
 
 	maintenanceBody, maintenanceContentType := resolveMaintenanceResponse(config)
 
+	maintenanceCacheControl := config.MaintenanceCacheControl
+	if maintenanceCacheControl == "" {
+		maintenanceCacheControl = "no-store"
+	}
+
 	m := &MaintenanceCheck{
-		next:                   next,
-		skipPrefixes:           skipPrefixesCopy,
-		skipHosts:              skipHostsCopy,
-		allowHTML:              config.AllowHTMLWhenMaintenance,
-		allowStaticExts:        staticExtsCopy,
-		maintenanceStatusCode:  config.MaintenanceStatusCode,
-		debug:                  config.Debug,
-		allowedOrigins:         allowedOriginsCopy,
-		corsAllowAnyOrigin:     config.CorsAllowAnyOrigin,
-		trustedProxies:         trustedProxies,
-		strictAssetMatching:    config.StrictAssetMatching,
-		sensitiveHeaders:       sensitiveHeaders,
-		maintenanceBody:        maintenanceBody,
-		maintenanceContentType: maintenanceContentType,
+		next:                    next,
+		skipPrefixes:            skipPrefixesCopy,
+		skipHosts:               skipHostsCopy,
+		allowHTML:               config.AllowHTMLWhenMaintenance,
+		allowStaticExts:         staticExtsCopy,
+		maintenanceStatusCode:   config.MaintenanceStatusCode,
+		debug:                   config.Debug,
+		allowedOrigins:          allowedOriginsCopy,
+		corsAllowAnyOrigin:      config.CorsAllowAnyOrigin,
+		trustedProxies:          trustedProxies,
+		strictAssetMatching:     config.StrictAssetMatching,
+		sensitiveHeaders:        sensitiveHeaders,
+		maintenanceBody:         maintenanceBody,
+		maintenanceContentType:  maintenanceContentType,
+		retryAfterSeconds:       config.RetryAfterSeconds,
+		maintenanceCacheControl: maintenanceCacheControl,
 	}
 
 	return m, nil
@@ -307,6 +317,12 @@ func (m *MaintenanceCheck) sendMaintenanceResponseWithCORS(rw http.ResponseWrite
 	m.addCORSHeadersToMaintenanceResponse(rw, req)
 
 	rw.Header().Set("Content-Type", m.maintenanceContentType)
+	if m.maintenanceCacheControl != "" {
+		rw.Header().Set("Cache-Control", m.maintenanceCacheControl)
+	}
+	if m.retryAfterSeconds > 0 {
+		rw.Header().Set("Retry-After", strconv.Itoa(m.retryAfterSeconds))
+	}
 	rw.WriteHeader(m.maintenanceStatusCode)
 	_, _ = rw.Write(m.maintenanceBody)
 }

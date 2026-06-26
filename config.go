@@ -25,6 +25,8 @@ type Config struct {
 	MaintenanceResponseBody     string `json:"maintenanceResponseBody,omitempty"`
 	MaintenanceResponseFilePath string `json:"maintenanceResponseFilePath,omitempty"`
 	MaintenanceContentType      string `json:"maintenanceContentType,omitempty"`
+	RetryAfterSeconds           int    `json:"retryAfterSeconds,omitempty"`
+	MaintenanceCacheControl     string `json:"maintenanceCacheControl,omitempty"`
 }
 
 type EnvironmentSecret struct {

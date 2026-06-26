@@ -89,3 +89,31 @@ func TestMaintenanceResponse_UnreadableFileFallsBackToInline(t *testing.T) {
 		t.Fatalf("fallback body = %q", got)
 	}
 }
+
+func TestMaintenanceResponse_RetryAfterEmittedWhenSet(t *testing.T) {
+	rec := blockedRequest(t, func(c *plugin.Config) { c.RetryAfterSeconds = 120 })
+	if got := rec.Header().Get("Retry-After"); got != "120" {
+		t.Fatalf("Retry-After = %q, want 120", got)
+	}
+}
+
+func TestMaintenanceResponse_NoRetryAfterByDefault(t *testing.T) {
+	rec := blockedRequest(t, func(c *plugin.Config) {})
+	if got := rec.Header().Get("Retry-After"); got != "" {
+		t.Fatalf("Retry-After should be empty by default, got %q", got)
+	}
+}
+
+func TestMaintenanceResponse_CacheControlDefaultNoStore(t *testing.T) {
+	rec := blockedRequest(t, func(c *plugin.Config) {})
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", got)
+	}
+}
+
+func TestMaintenanceResponse_CacheControlOverride(t *testing.T) {
+	rec := blockedRequest(t, func(c *plugin.Config) { c.MaintenanceCacheControl = "no-cache, max-age=0" })
+	if got := rec.Header().Get("Cache-Control"); got != "no-cache, max-age=0" {
+		t.Fatalf("Cache-Control = %q", got)
+	}
+}
