@@ -11,6 +11,62 @@ import (
 	plugin "github.com/CitronusAcademy/traefik-maintenance-plugin"
 )
 
+type corsTestCase struct {
+	name                string
+	endpoint            string
+	method              string
+	origin              string
+	clientIP            string
+	expectedStatusCode  int
+	expectedCORSOrigin  string
+	expectedCORSMethods string
+	expectedCORSHeaders string
+	expectedCORSMaxAge  string
+	description         string
+}
+
+// verifyCORSResponse checks the status code, CORS headers, credentialed-wildcard
+// invariant, and maintenance content type for one CORS table case.
+func verifyCORSResponse(t *testing.T, response *http.Response, tt corsTestCase) {
+	t.Helper()
+
+	if response.StatusCode != tt.expectedStatusCode {
+		t.Errorf("%s: Expected status code %d, got %d", tt.description, tt.expectedStatusCode, response.StatusCode)
+	}
+
+	for _, c := range []struct{ header, expected string }{
+		{"Access-Control-Allow-Origin", tt.expectedCORSOrigin},
+		{"Access-Control-Allow-Methods", tt.expectedCORSMethods},
+		{"Access-Control-Allow-Headers", tt.expectedCORSHeaders},
+		{"Access-Control-Max-Age", tt.expectedCORSMaxAge},
+	} {
+		if c.expected == "" {
+			continue
+		}
+		if got := response.Header.Get(c.header); got != c.expected {
+			t.Errorf("%s: Expected %s '%s', got '%s'", tt.description, c.header, c.expected, got)
+		}
+	}
+
+	// These cases use the default config (allow-any, empty allowedOrigins), so
+	// origins are reflected by the wildcard. Per the credentialed-wildcard
+	// hardening, such responses must NOT carry Access-Control-Allow-Credentials
+	// (credentials are sent only for an explicitly allow-listed origin — see
+	// TestCORSCredentialsOnlyForAllowlistedOrigin).
+	if tt.expectedCORSOrigin != "" && (tt.expectedStatusCode == 512 || tt.method == http.MethodOptions) {
+		if got := response.Header.Get("Access-Control-Allow-Credentials"); got != "" {
+			t.Errorf("%s: wildcard-reflected origin must not get Access-Control-Allow-Credentials, got '%s'", tt.description, got)
+		}
+	}
+
+	// Verify content type for all maintenance responses (both with and without origin)
+	if tt.expectedStatusCode == 512 {
+		if contentType := response.Header.Get("Content-Type"); contentType != "text/plain; charset=utf-8" {
+			t.Errorf("%s: Expected content type 'text/plain; charset=utf-8', got '%s'", tt.description, contentType)
+		}
+	}
+}
+
 func TestCORSFunctionalityDuringMaintenance(t *testing.T) {
 	// Reset shared state between tests
 	plugin.ResetSharedCacheForTesting()
@@ -36,19 +92,7 @@ func TestCORSFunctionalityDuringMaintenance(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	tests := []struct {
-		name                string
-		endpoint            string
-		method              string
-		origin              string
-		clientIP            string
-		expectedStatusCode  int
-		expectedCORSOrigin  string
-		expectedCORSMethods string
-		expectedCORSHeaders string
-		expectedCORSMaxAge  string
-		description         string
-	}{
+	tests := []corsTestCase{
 		{
 			name:                "CORS preflight - maintenance active, blocked IP",
 			endpoint:            ts.URL + "/maintenance-active-no-whitelist",
@@ -169,58 +213,7 @@ func TestCORSFunctionalityDuringMaintenance(t *testing.T) {
 			response := recorder.Result()
 			defer response.Body.Close()
 
-			// Check status code
-			if response.StatusCode != tt.expectedStatusCode {
-				t.Errorf("%s: Expected status code %d, got %d", tt.description, tt.expectedStatusCode, response.StatusCode)
-			}
-
-			// Check CORS headers if expected
-			if tt.expectedCORSOrigin != "" {
-				actualOrigin := response.Header.Get("Access-Control-Allow-Origin")
-				if actualOrigin != tt.expectedCORSOrigin {
-					t.Errorf("%s: Expected CORS origin '%s', got '%s'", tt.description, tt.expectedCORSOrigin, actualOrigin)
-				}
-			}
-
-			if tt.expectedCORSMethods != "" {
-				actualMethods := response.Header.Get("Access-Control-Allow-Methods")
-				if actualMethods != tt.expectedCORSMethods {
-					t.Errorf("%s: Expected CORS methods '%s', got '%s'", tt.description, tt.expectedCORSMethods, actualMethods)
-				}
-			}
-
-			if tt.expectedCORSHeaders != "" {
-				actualHeaders := response.Header.Get("Access-Control-Allow-Headers")
-				if actualHeaders != tt.expectedCORSHeaders {
-					t.Errorf("%s: Expected CORS headers '%s', got '%s'", tt.description, tt.expectedCORSHeaders, actualHeaders)
-				}
-			}
-
-			if tt.expectedCORSMaxAge != "" {
-				actualMaxAge := response.Header.Get("Access-Control-Max-Age")
-				if actualMaxAge != tt.expectedCORSMaxAge {
-					t.Errorf("%s: Expected CORS max-age '%s', got '%s'", tt.description, tt.expectedCORSMaxAge, actualMaxAge)
-				}
-			}
-
-			// These cases use the default config (allow-any, empty allowedOrigins), so
-			// origins are reflected by the wildcard. Per the credentialed-wildcard
-			// hardening, such responses must NOT carry Access-Control-Allow-Credentials
-			// (credentials are sent only for an explicitly allow-listed origin — see
-			// TestCORSCredentialsOnlyForAllowlistedOrigin).
-			if tt.expectedCORSOrigin != "" && (tt.expectedStatusCode == 512 || tt.method == http.MethodOptions) {
-				if got := response.Header.Get("Access-Control-Allow-Credentials"); got != "" {
-					t.Errorf("%s: wildcard-reflected origin must not get Access-Control-Allow-Credentials, got '%s'", tt.description, got)
-				}
-			}
-
-			// Verify content type for all maintenance responses (both with and without origin)
-			if tt.expectedStatusCode == 512 {
-				contentType := response.Header.Get("Content-Type")
-				if contentType != "text/plain; charset=utf-8" {
-					t.Errorf("%s: Expected content type 'text/plain; charset=utf-8', got '%s'", tt.description, contentType)
-				}
-			}
+			verifyCORSResponse(t, response, tt)
 
 			if t.Failed() {
 				t.Logf("Response headers: %+v", response.Header)

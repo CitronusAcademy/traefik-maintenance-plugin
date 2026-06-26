@@ -21,6 +21,12 @@ type Config struct {
 	CorsAllowAnyOrigin       bool                         `json:"corsAllowAnyOrigin,omitempty"`
 	TrustedProxies           []string                     `json:"trustedProxies,omitempty"`
 	StrictAssetMatching      bool                         `json:"strictAssetMatching,omitempty"`
+
+	MaintenanceResponseBody     string `json:"maintenanceResponseBody,omitempty"`
+	MaintenanceResponseFilePath string `json:"maintenanceResponseFilePath,omitempty"`
+	MaintenanceContentType      string `json:"maintenanceContentType,omitempty"`
+	RetryAfterSeconds           int    `json:"retryAfterSeconds,omitempty"`
+	MaintenanceCacheControl     string `json:"maintenanceCacheControl,omitempty"`
 }
 
 type EnvironmentSecret struct {

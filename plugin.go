@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,18 +18,96 @@ import (
 )
 
 type MaintenanceCheck struct {
-	next                  http.Handler
-	skipPrefixes          []string
-	skipHosts             []string
-	allowHTML             bool
-	allowStaticExts       []string
-	maintenanceStatusCode int
-	debug                 bool
-	allowedOrigins        []string
-	corsAllowAnyOrigin    bool
-	trustedProxies        []*net.IPNet
-	strictAssetMatching   bool
-	sensitiveHeaders      map[string]struct{}
+	next                    http.Handler
+	skipPrefixes            []string
+	skipHosts               []string
+	allowHTML               bool
+	allowStaticExts         []string
+	maintenanceStatusCode   int
+	debug                   bool
+	allowedOrigins          []string
+	corsAllowAnyOrigin      bool
+	trustedProxies          []*net.IPNet
+	strictAssetMatching     bool
+	sensitiveHeaders        map[string]struct{}
+	maintenanceBody         []byte
+	maintenanceContentType  string
+	retryAfterSeconds       int
+	maintenanceCacheControl string
+}
+
+// resolveMaintenanceResponse decides, once at startup, what body and content
+// type the maintenance response serves. Precedence: a readable file path, then
+// an inline body, then the built-in plain-text stub. The file is read here (not
+// on the request path) so Yaegi never touches the filesystem per request; an
+// unreadable file logs a warning and falls back rather than failing startup.
+func resolveMaintenanceResponse(config *Config) ([]byte, string) {
+	contentType := strings.TrimSpace(config.MaintenanceContentType)
+	if contentType == "" {
+		contentType = "text/plain; charset=utf-8"
+	}
+	if path := strings.TrimSpace(config.MaintenanceResponseFilePath); path != "" {
+		if data, err := os.ReadFile(path); err == nil { //nolint:gosec // path is an operator-set config value, not user input
+			return data, contentType
+		} else {
+			fmt.Fprintf(logx.Out, "[MaintenanceCheck] Warning: cannot read maintenanceResponseFilePath %q: %v; falling back\n", path, err)
+		}
+	}
+	if config.MaintenanceResponseBody != "" {
+		return []byte(config.MaintenanceResponseBody), contentType
+	}
+	return []byte("Service is in maintenance mode"), contentType
+}
+
+// buildSensitiveHeaders returns the set of header names whose values must never
+// reach debug logs: the standard credential-bearing headers plus every
+// configured secret header (top-level and per-environment), so the plugin's own
+// auth secret is redacted too.
+func buildSensitiveHeaders(config *Config) map[string]struct{} {
+	sensitiveHeaders := map[string]struct{}{
+		"Authorization":       {},
+		"Cookie":              {},
+		"Set-Cookie":          {},
+		"Proxy-Authorization": {},
+		"X-Plugin-Secret":     {},
+	}
+	if config.SecretHeader != "" {
+		sensitiveHeaders[http.CanonicalHeaderKey(config.SecretHeader)] = struct{}{}
+	}
+	for _, s := range config.EnvironmentSecrets {
+		if s.Header != "" {
+			sensitiveHeaders[http.CanonicalHeaderKey(s.Header)] = struct{}{}
+		}
+	}
+	return sensitiveHeaders
+}
+
+// parseTrustedProxies parses trustedProxies entries into CIDRs once at startup.
+// A bare IP becomes a host route (/32 or /128). When the result is empty,
+// Cf-Connecting-Ip is trusted unconditionally (today's default behavior).
+func parseTrustedProxies(entries []string, debug bool) []*net.IPNet {
+	var trustedProxies []*net.IPNet
+	for _, entry := range entries {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		if !strings.Contains(entry, "/") {
+			if parsed := net.ParseIP(entry); parsed != nil {
+				bits := 32
+				if parsed.To4() == nil {
+					bits = 128
+				}
+				entry = fmt.Sprintf("%s/%d", entry, bits)
+			}
+		}
+		if _, cidr, err := net.ParseCIDR(entry); err == nil {
+			trustedProxies = append(trustedProxies, cidr)
+		} else if debug {
+			fmt.Fprintf(logx.Out, "[MaintenanceCheck] Warning: ignoring invalid trustedProxies entry %q: %v\n", entry, err)
+		}
+	}
+	return trustedProxies
 }
 
 func New(_ context.Context, next http.Handler, config *Config, name string) (http.Handler, error) {
@@ -80,63 +160,34 @@ func New(_ context.Context, next http.Handler, config *Config, name string) (htt
 	allowedOriginsCopy := make([]string, len(config.AllowedOrigins))
 	copy(allowedOriginsCopy, config.AllowedOrigins)
 
-	// Header names whose values must never reach debug logs. Covers the standard
-	// credential-bearing headers plus every configured secret header (top-level
-	// and per-environment), so the plugin's own auth secret is redacted too.
-	sensitiveHeaders := map[string]struct{}{
-		"Authorization":       {},
-		"Cookie":              {},
-		"Set-Cookie":          {},
-		"Proxy-Authorization": {},
-		"X-Plugin-Secret":     {},
-	}
-	if config.SecretHeader != "" {
-		sensitiveHeaders[http.CanonicalHeaderKey(config.SecretHeader)] = struct{}{}
-	}
-	for _, s := range config.EnvironmentSecrets {
-		if s.Header != "" {
-			sensitiveHeaders[http.CanonicalHeaderKey(s.Header)] = struct{}{}
-		}
-	}
+	sensitiveHeaders := buildSensitiveHeaders(config)
 
-	// Parse trustedProxies into CIDRs once. A bare IP becomes a host route
-	// (/32 or /128). When the set is empty, Cf-Connecting-Ip is trusted
-	// unconditionally (today's default behavior).
-	var trustedProxies []*net.IPNet
-	for _, entry := range config.TrustedProxies {
-		entry = strings.TrimSpace(entry)
-		if entry == "" {
-			continue
-		}
-		if !strings.Contains(entry, "/") {
-			if ip := net.ParseIP(entry); ip != nil {
-				bits := 32
-				if ip.To4() == nil {
-					bits = 128
-				}
-				entry = fmt.Sprintf("%s/%d", entry, bits)
-			}
-		}
-		if _, cidr, err := net.ParseCIDR(entry); err == nil {
-			trustedProxies = append(trustedProxies, cidr)
-		} else if config.Debug {
-			fmt.Fprintf(logx.Out, "[MaintenanceCheck] Warning: ignoring invalid trustedProxies entry %q: %v\n", entry, err)
-		}
+	trustedProxies := parseTrustedProxies(config.TrustedProxies, config.Debug)
+
+	maintenanceBody, maintenanceContentType := resolveMaintenanceResponse(config)
+
+	maintenanceCacheControl := config.MaintenanceCacheControl
+	if maintenanceCacheControl == "" {
+		maintenanceCacheControl = "no-store"
 	}
 
 	m := &MaintenanceCheck{
-		next:                  next,
-		skipPrefixes:          skipPrefixesCopy,
-		skipHosts:             skipHostsCopy,
-		allowHTML:             config.AllowHTMLWhenMaintenance,
-		allowStaticExts:       staticExtsCopy,
-		maintenanceStatusCode: config.MaintenanceStatusCode,
-		debug:                 config.Debug,
-		allowedOrigins:        allowedOriginsCopy,
-		corsAllowAnyOrigin:    config.CorsAllowAnyOrigin,
-		trustedProxies:        trustedProxies,
-		strictAssetMatching:   config.StrictAssetMatching,
-		sensitiveHeaders:      sensitiveHeaders,
+		next:                    next,
+		skipPrefixes:            skipPrefixesCopy,
+		skipHosts:               skipHostsCopy,
+		allowHTML:               config.AllowHTMLWhenMaintenance,
+		allowStaticExts:         staticExtsCopy,
+		maintenanceStatusCode:   config.MaintenanceStatusCode,
+		debug:                   config.Debug,
+		allowedOrigins:          allowedOriginsCopy,
+		corsAllowAnyOrigin:      config.CorsAllowAnyOrigin,
+		trustedProxies:          trustedProxies,
+		strictAssetMatching:     config.StrictAssetMatching,
+		sensitiveHeaders:        sensitiveHeaders,
+		maintenanceBody:         maintenanceBody,
+		maintenanceContentType:  maintenanceContentType,
+		retryAfterSeconds:       config.RetryAfterSeconds,
+		maintenanceCacheControl: maintenanceCacheControl,
 	}
 
 	return m, nil
@@ -199,28 +250,7 @@ func (m *MaintenanceCheck) ServeHTTP(rw http.ResponseWriter, req *http.Request) 
 	}
 
 	if isActive {
-		if m.allowHTML && skip.IsHTMLRequest(req) {
-			if m.debug {
-				fmt.Fprintf(logx.Out, "[MaintenanceCheck] Maintenance active but request accepts HTML, bypassing maintenance check\n")
-			}
-			m.next.ServeHTTP(rw, req)
-			return
-		}
-
-		if skip.IsStaticAsset(req, m.allowStaticExts, m.strictAssetMatching) {
-			if m.debug {
-				fmt.Fprintf(logx.Out, "[MaintenanceCheck] Maintenance active but path '%s' matches allowed static extensions, bypassing maintenance check\n", req.URL.Path)
-			}
-			m.next.ServeHTTP(rw, req)
-			return
-		}
-
-		if ip.IsClientAllowed(req, whitelist, m.trustedProxies, m.debug) {
-			m.next.ServeHTTP(rw, req)
-			return
-		}
-
-		m.sendMaintenanceResponseWithCORS(rw, req)
+		m.handleMaintenanceActive(rw, req, whitelist)
 		return
 	}
 
@@ -228,6 +258,35 @@ func (m *MaintenanceCheck) ServeHTTP(rw http.ResponseWriter, req *http.Request) 
 		fmt.Fprintf(logx.Out, "[MaintenanceCheck] Maintenance mode is inactive, allowing request\n")
 	}
 	m.next.ServeHTTP(rw, req)
+}
+
+// handleMaintenanceActive serves a request while maintenance is active: it
+// forwards HTML documents (when allowed), allowed static assets, and whitelisted
+// clients to the next handler, and blocks everything else with the maintenance
+// response.
+func (m *MaintenanceCheck) handleMaintenanceActive(rw http.ResponseWriter, req *http.Request, whitelist []string) {
+	if m.allowHTML && skip.IsHTMLRequest(req) {
+		if m.debug {
+			fmt.Fprintf(logx.Out, "[MaintenanceCheck] Maintenance active but request accepts HTML, bypassing maintenance check\n")
+		}
+		m.next.ServeHTTP(rw, req)
+		return
+	}
+
+	if skip.IsStaticAsset(req, m.allowStaticExts, m.strictAssetMatching) {
+		if m.debug {
+			fmt.Fprintf(logx.Out, "[MaintenanceCheck] Maintenance active but path '%s' matches allowed static extensions, bypassing maintenance check\n", req.URL.Path)
+		}
+		m.next.ServeHTTP(rw, req)
+		return
+	}
+
+	if ip.IsClientAllowed(req, whitelist, m.trustedProxies, m.debug) {
+		m.next.ServeHTTP(rw, req)
+		return
+	}
+
+	m.sendMaintenanceResponseWithCORS(rw, req)
 }
 
 func (m *MaintenanceCheck) handleCORSPreflightRequest(rw http.ResponseWriter, req *http.Request, normalizedHost string) bool {
@@ -276,9 +335,15 @@ func (m *MaintenanceCheck) sendMaintenanceResponseWithCORS(rw http.ResponseWrite
 
 	m.addCORSHeadersToMaintenanceResponse(rw, req)
 
-	rw.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	rw.Header().Set("Content-Type", m.maintenanceContentType)
+	if m.maintenanceCacheControl != "" {
+		rw.Header().Set("Cache-Control", m.maintenanceCacheControl)
+	}
+	if m.retryAfterSeconds > 0 {
+		rw.Header().Set("Retry-After", strconv.Itoa(m.retryAfterSeconds))
+	}
 	rw.WriteHeader(m.maintenanceStatusCode)
-	_, _ = rw.Write([]byte("Service is in maintenance mode"))
+	_, _ = rw.Write(m.maintenanceBody)
 }
 
 func (m *MaintenanceCheck) addCORSHeadersToMaintenanceResponse(rw http.ResponseWriter, req *http.Request) {

@@ -1,0 +1,28 @@
+# A single middleware carries both environment suffixes. The plugin's cache is
+# package-global per Traefik replica and initializes once, so two separate plugin
+# middlewares cannot hold independent endpoint maps — the first to load wins.
+# One middleware with per-suffix endpoints is the faithful representation and
+# also exercises per-environment routing (on.localhost vs off.localhost).
+http:
+  routers:
+    r-active:
+      rule: "Host(`on.localhost`)"
+      service: whoami
+      middlewares: [maint]
+    r-inactive:
+      rule: "Host(`off.localhost`)"
+      service: whoami
+      middlewares: [maint]
+  services:
+    whoami:
+      loadBalancer:
+        servers:
+          - url: "http://whoami:80"
+  middlewares:
+    maint:
+      plugin:
+        maintenanceCheck:
+          environmentEndpoints:
+            "on.localhost": "http://mock/active.json"
+            "off.localhost": "http://mock/inactive.json"
+          maintenanceStatusCode: 512
