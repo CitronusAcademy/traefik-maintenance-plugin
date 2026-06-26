@@ -247,7 +247,7 @@ func calculateBackoff(attempts int) time.Duration {
 
 	// Add jitter of +/- 20% to avoid thundering herd problem.
 	// math/rand's top-level funcs are auto-seeded and goroutine-safe (Go 1.20+).
-	jitterFactor := 0.8 + 0.4*rand.Float64()
+	jitterFactor := 0.8 + 0.4*rand.Float64() //nolint:gosec // backoff jitter is not security-sensitive; no crypto entropy needed
 
 	jitter := time.Duration(float64(backoff) * jitterFactor)
 

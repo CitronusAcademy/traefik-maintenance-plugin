@@ -47,7 +47,7 @@ func resolveMaintenanceResponse(config *Config) ([]byte, string) {
 		contentType = "text/plain; charset=utf-8"
 	}
 	if path := strings.TrimSpace(config.MaintenanceResponseFilePath); path != "" {
-		if data, err := os.ReadFile(path); err == nil {
+		if data, err := os.ReadFile(path); err == nil { //nolint:gosec // path is an operator-set config value, not user input
 			return data, contentType
 		} else {
 			fmt.Fprintf(logx.Out, "[MaintenanceCheck] Warning: cannot read maintenanceResponseFilePath %q: %v; falling back\n", path, err)

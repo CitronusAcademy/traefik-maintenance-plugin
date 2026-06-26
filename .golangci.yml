@@ -6,6 +6,7 @@ run:
 linters:
   enable:
     - gocyclo
+    - gosec
   settings:
     errcheck:
       # Diagnostic output goes to the package log writer (logOut) on a
@@ -26,3 +27,4 @@ linters:
         linters:
           - errcheck
           - gocyclo
+          - gosec
