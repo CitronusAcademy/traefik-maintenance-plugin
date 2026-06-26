@@ -4,6 +4,8 @@ run:
   timeout: 3m
 
 linters:
+  enable:
+    - gocyclo
   settings:
     errcheck:
       # Diagnostic output goes to the package log writer (logOut) on a
@@ -11,10 +13,16 @@ linters:
       # so these returns are intentionally unchecked.
       exclude-functions:
         - fmt.Fprintf
+    gocyclo:
+      # Keep every production function at Go Report Card A+ (cyclomatic
+      # complexity <= 15). Test functions are excluded below.
+      min-complexity: 15
   exclusions:
     rules:
       # Test helpers ignore best-effort errors (response body Close, JSON
-      # encode to an httptest recorder) by design.
+      # encode to an httptest recorder) by design, and table-driven tests
+      # legitimately branch more than production code.
       - path: _test\.go
         linters:
           - errcheck
+          - gocyclo

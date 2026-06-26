@@ -38,13 +38,8 @@ func IsClientAllowed(req *http.Request, whitelist []string, trustedProxies []*ne
 	}
 
 	// Check for wildcard first
-	for _, entry := range whitelist {
-		if entry == "*" {
-			if debug {
-				fmt.Fprintf(logx.Out, "[MaintenanceCheck] Wildcard (*) found in whitelist, allowing request\n")
-			}
-			return true
-		}
+	if hasWildcard(whitelist, debug) {
+		return true
 	}
 
 	// When trustedProxies is configured, only honor Cf-Connecting-Ip if the
@@ -73,22 +68,43 @@ func IsClientAllowed(req *http.Request, whitelist []string, trustedProxies []*ne
 		fmt.Fprintf(logx.Out, "[MaintenanceCheck] Beginning whitelist evaluation for %d IPs\n", len(clientIPs))
 	}
 
-	// Check each client IP against the whitelist
-	// If ANY IP matches, allow the request
+	// Check each client IP against the whitelist; if ANY matches, allow.
+	if anyIPMatchesWhitelist(clientIPs, whitelist, debug) {
+		return true
+	}
+
+	if debug {
+		fmt.Fprintf(logx.Out, "[MaintenanceCheck] None of the client IPs %v matched whitelist, blocking request\n", clientIPs)
+	}
+	return false
+}
+
+// hasWildcard reports whether the whitelist contains the "*" entry, which
+// allows every client.
+func hasWildcard(whitelist []string, debug bool) bool {
+	for _, entry := range whitelist {
+		if entry == "*" {
+			if debug {
+				fmt.Fprintf(logx.Out, "[MaintenanceCheck] Wildcard (*) found in whitelist, allowing request\n")
+			}
+			return true
+		}
+	}
+	return false
+}
+
+// anyIPMatchesWhitelist reports whether any of clientIPs satisfies any whitelist
+// entry (exact or CIDR). The "*" wildcard is handled by the caller.
+func anyIPMatchesWhitelist(clientIPs, whitelist []string, debug bool) bool {
 	for _, clientIP := range clientIPs {
 		if clientIP == "" {
 			continue
 		}
-
 		for _, whitelistEntry := range whitelist {
 			if matchWhitelistEntry(clientIP, whitelistEntry, debug) {
 				return true
 			}
 		}
-	}
-
-	if debug {
-		fmt.Fprintf(logx.Out, "[MaintenanceCheck] None of the client IPs %v matched whitelist, blocking request\n", clientIPs)
 	}
 	return false
 }

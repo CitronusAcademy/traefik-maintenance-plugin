@@ -148,16 +148,12 @@ func refreshMaintenanceStatusForEnvironment(envSuffix string) bool {
 // transport error, non-200 status, decode error, or a 200 whose body carries
 // no maintenance object — at which point the caller applies backoff and keeps
 // the prior cached state. The caller is responsible for the nil-client check.
-func fetchMaintenanceState(client *http.Client, endpoint, userAgent, secretHeader, secretHeaderValue string, requestTimeout time.Duration, envSuffix string, debug bool) (*maintenanceResponse, bool) {
-	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
-	defer cancel()
-
+// buildStatusRequest constructs the GET request for a maintenance-status fetch,
+// setting the User-Agent and, when both are configured, the secret header.
+func buildStatusRequest(ctx context.Context, endpoint, userAgent, secretHeader, secretHeaderValue, envSuffix string, debug bool) (*http.Request, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		if debug {
-			fmt.Fprintf(logx.Out, "[MaintenanceCheck] Error creating request: %v\n", err)
-		}
-		return nil, false
+		return nil, err
 	}
 
 	req.Header.Set("User-Agent", userAgent)
@@ -167,6 +163,21 @@ func fetchMaintenanceState(client *http.Client, endpoint, userAgent, secretHeade
 		if debug {
 			fmt.Fprintf(logx.Out, "[MaintenanceCheck] Added secret header '%s' for environment '%s'\n", secretHeader, envSuffix)
 		}
+	}
+
+	return req, nil
+}
+
+func fetchMaintenanceState(client *http.Client, endpoint, userAgent, secretHeader, secretHeaderValue string, requestTimeout time.Duration, envSuffix string, debug bool) (*maintenanceResponse, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	defer cancel()
+
+	req, err := buildStatusRequest(ctx, endpoint, userAgent, secretHeader, secretHeaderValue, envSuffix, debug)
+	if err != nil {
+		if debug {
+			fmt.Fprintf(logx.Out, "[MaintenanceCheck] Error creating request: %v\n", err)
+		}
+		return nil, false
 	}
 
 	resp, err := client.Do(req)

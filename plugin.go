@@ -59,6 +59,57 @@ func resolveMaintenanceResponse(config *Config) ([]byte, string) {
 	return []byte("Service is in maintenance mode"), contentType
 }
 
+// buildSensitiveHeaders returns the set of header names whose values must never
+// reach debug logs: the standard credential-bearing headers plus every
+// configured secret header (top-level and per-environment), so the plugin's own
+// auth secret is redacted too.
+func buildSensitiveHeaders(config *Config) map[string]struct{} {
+	sensitiveHeaders := map[string]struct{}{
+		"Authorization":       {},
+		"Cookie":              {},
+		"Set-Cookie":          {},
+		"Proxy-Authorization": {},
+		"X-Plugin-Secret":     {},
+	}
+	if config.SecretHeader != "" {
+		sensitiveHeaders[http.CanonicalHeaderKey(config.SecretHeader)] = struct{}{}
+	}
+	for _, s := range config.EnvironmentSecrets {
+		if s.Header != "" {
+			sensitiveHeaders[http.CanonicalHeaderKey(s.Header)] = struct{}{}
+		}
+	}
+	return sensitiveHeaders
+}
+
+// parseTrustedProxies parses trustedProxies entries into CIDRs once at startup.
+// A bare IP becomes a host route (/32 or /128). When the result is empty,
+// Cf-Connecting-Ip is trusted unconditionally (today's default behavior).
+func parseTrustedProxies(entries []string, debug bool) []*net.IPNet {
+	var trustedProxies []*net.IPNet
+	for _, entry := range entries {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		if !strings.Contains(entry, "/") {
+			if parsed := net.ParseIP(entry); parsed != nil {
+				bits := 32
+				if parsed.To4() == nil {
+					bits = 128
+				}
+				entry = fmt.Sprintf("%s/%d", entry, bits)
+			}
+		}
+		if _, cidr, err := net.ParseCIDR(entry); err == nil {
+			trustedProxies = append(trustedProxies, cidr)
+		} else if debug {
+			fmt.Fprintf(logx.Out, "[MaintenanceCheck] Warning: ignoring invalid trustedProxies entry %q: %v\n", entry, err)
+		}
+	}
+	return trustedProxies
+}
+
 func New(_ context.Context, next http.Handler, config *Config, name string) (http.Handler, error) {
 	if config.MaintenanceStatusCode < 100 || config.MaintenanceStatusCode > 599 {
 		return nil, fmt.Errorf("invalid maintenance status code: %d (must be between 100-599)",
@@ -109,49 +160,9 @@ func New(_ context.Context, next http.Handler, config *Config, name string) (htt
 	allowedOriginsCopy := make([]string, len(config.AllowedOrigins))
 	copy(allowedOriginsCopy, config.AllowedOrigins)
 
-	// Header names whose values must never reach debug logs. Covers the standard
-	// credential-bearing headers plus every configured secret header (top-level
-	// and per-environment), so the plugin's own auth secret is redacted too.
-	sensitiveHeaders := map[string]struct{}{
-		"Authorization":       {},
-		"Cookie":              {},
-		"Set-Cookie":          {},
-		"Proxy-Authorization": {},
-		"X-Plugin-Secret":     {},
-	}
-	if config.SecretHeader != "" {
-		sensitiveHeaders[http.CanonicalHeaderKey(config.SecretHeader)] = struct{}{}
-	}
-	for _, s := range config.EnvironmentSecrets {
-		if s.Header != "" {
-			sensitiveHeaders[http.CanonicalHeaderKey(s.Header)] = struct{}{}
-		}
-	}
+	sensitiveHeaders := buildSensitiveHeaders(config)
 
-	// Parse trustedProxies into CIDRs once. A bare IP becomes a host route
-	// (/32 or /128). When the set is empty, Cf-Connecting-Ip is trusted
-	// unconditionally (today's default behavior).
-	var trustedProxies []*net.IPNet
-	for _, entry := range config.TrustedProxies {
-		entry = strings.TrimSpace(entry)
-		if entry == "" {
-			continue
-		}
-		if !strings.Contains(entry, "/") {
-			if ip := net.ParseIP(entry); ip != nil {
-				bits := 32
-				if ip.To4() == nil {
-					bits = 128
-				}
-				entry = fmt.Sprintf("%s/%d", entry, bits)
-			}
-		}
-		if _, cidr, err := net.ParseCIDR(entry); err == nil {
-			trustedProxies = append(trustedProxies, cidr)
-		} else if config.Debug {
-			fmt.Fprintf(logx.Out, "[MaintenanceCheck] Warning: ignoring invalid trustedProxies entry %q: %v\n", entry, err)
-		}
-	}
+	trustedProxies := parseTrustedProxies(config.TrustedProxies, config.Debug)
 
 	maintenanceBody, maintenanceContentType := resolveMaintenanceResponse(config)
 
@@ -239,28 +250,7 @@ func (m *MaintenanceCheck) ServeHTTP(rw http.ResponseWriter, req *http.Request) 
 	}
 
 	if isActive {
-		if m.allowHTML && skip.IsHTMLRequest(req) {
-			if m.debug {
-				fmt.Fprintf(logx.Out, "[MaintenanceCheck] Maintenance active but request accepts HTML, bypassing maintenance check\n")
-			}
-			m.next.ServeHTTP(rw, req)
-			return
-		}
-
-		if skip.IsStaticAsset(req, m.allowStaticExts, m.strictAssetMatching) {
-			if m.debug {
-				fmt.Fprintf(logx.Out, "[MaintenanceCheck] Maintenance active but path '%s' matches allowed static extensions, bypassing maintenance check\n", req.URL.Path)
-			}
-			m.next.ServeHTTP(rw, req)
-			return
-		}
-
-		if ip.IsClientAllowed(req, whitelist, m.trustedProxies, m.debug) {
-			m.next.ServeHTTP(rw, req)
-			return
-		}
-
-		m.sendMaintenanceResponseWithCORS(rw, req)
+		m.handleMaintenanceActive(rw, req, whitelist)
 		return
 	}
 
@@ -268,6 +258,35 @@ func (m *MaintenanceCheck) ServeHTTP(rw http.ResponseWriter, req *http.Request) 
 		fmt.Fprintf(logx.Out, "[MaintenanceCheck] Maintenance mode is inactive, allowing request\n")
 	}
 	m.next.ServeHTTP(rw, req)
+}
+
+// handleMaintenanceActive serves a request while maintenance is active: it
+// forwards HTML documents (when allowed), allowed static assets, and whitelisted
+// clients to the next handler, and blocks everything else with the maintenance
+// response.
+func (m *MaintenanceCheck) handleMaintenanceActive(rw http.ResponseWriter, req *http.Request, whitelist []string) {
+	if m.allowHTML && skip.IsHTMLRequest(req) {
+		if m.debug {
+			fmt.Fprintf(logx.Out, "[MaintenanceCheck] Maintenance active but request accepts HTML, bypassing maintenance check\n")
+		}
+		m.next.ServeHTTP(rw, req)
+		return
+	}
+
+	if skip.IsStaticAsset(req, m.allowStaticExts, m.strictAssetMatching) {
+		if m.debug {
+			fmt.Fprintf(logx.Out, "[MaintenanceCheck] Maintenance active but path '%s' matches allowed static extensions, bypassing maintenance check\n", req.URL.Path)
+		}
+		m.next.ServeHTTP(rw, req)
+		return
+	}
+
+	if ip.IsClientAllowed(req, whitelist, m.trustedProxies, m.debug) {
+		m.next.ServeHTTP(rw, req)
+		return
+	}
+
+	m.sendMaintenanceResponseWithCORS(rw, req)
 }
 
 func (m *MaintenanceCheck) handleCORSPreflightRequest(rw http.ResponseWriter, req *http.Request, normalizedHost string) bool {
