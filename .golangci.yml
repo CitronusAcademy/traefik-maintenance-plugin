@@ -15,8 +15,8 @@ linters:
       exclude-functions:
         - fmt.Fprintf
     gocyclo:
-      # Keep every production function at Go Report Card A+ (cyclomatic
-      # complexity <= 15). Test functions are excluded below.
+      # Keep every production function at cyclomatic complexity <= 15.
+      # Test functions are excluded below.
       min-complexity: 15
   exclusions:
     rules:
