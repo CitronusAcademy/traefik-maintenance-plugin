@@ -44,6 +44,17 @@ func TestWorkflowPins(t *testing.T) {
 	if !strings.Contains(compose, "image: traefik/whoami") || !strings.Contains(compose, "image: nginx:alpine") {
 		t.Fatal("e2e stub images changed")
 	}
+
+	mod := readPinFile(t, "go.mod")
+	if !strings.Contains(mod, "go 1.26.0\n") {
+		t.Fatal("go.mod lost go 1.26.0")
+	}
+	if !strings.Contains(mod, "toolchain go1.26.9") {
+		t.Fatal("go.mod lost toolchain go1.26.9")
+	}
+	if strings.Contains(mod, "go 1.25") || strings.Contains(mod, "go1.25") {
+		t.Fatal("go.mod still selects go 1.25")
+	}
 }
 
 func readPinFile(t *testing.T, path string) string {
